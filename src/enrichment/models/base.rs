@@ -2,7 +2,7 @@ use crate::{
     alert::AlertCutout,
     utils::fits::{prepare_triplet, CutoutError},
 };
-use ndarray::{Array, Array2, Axis, Dim};
+use ndarray::{Array, Dim};
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use std::env;
 use tracing::instrument;
@@ -15,33 +15,69 @@ pub enum ModelError {
     NdarrayShape(#[from] ndarray::ShapeError),
     #[error("error from ort")]
     Ort(#[from] ort::Error),
+    #[error("error from ort session builder")]
+    OrtSessionBuilder(#[from] ort::Error<ort::session::builder::SessionBuilder>),
     #[error("error preparing cutout data")]
     PrepareCutoutError(#[from] CutoutError),
     #[error("error converting predictions to vec")]
     ModelOutputToVecError,
-    #[error("error converting array to tensor")]
-    TensorConversionError,
     #[error("missing feature in alert: {0}")]
     MissingFeature(&'static str),
+    #[error("ORT_DYLIB_PATH is not set on Linux; ONNX Runtime cannot be loaded. Please set ORT_DYLIB_PATH to the path of your libonnxruntime.so.")]
+    MissingOrtDylibPath,
 }
 
+/// Load an ONNX model, optionally on a specific CUDA device.
+///
+/// GPU usage is controlled by the `BOOM_GPU__ENABLED` environment variable (default: `"true"`).
+/// When `device_id` is `Some(id)`, that CUDA device is used; otherwise device 0.
 pub fn load_model(path: &str) -> Result<Session, ModelError> {
+    load_model_on_device(path, None)
+}
+
+fn env_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+pub fn load_model_on_device(path: &str, device_id: Option<i32>) -> Result<Session, ModelError> {
     let mut builder = Session::builder()?;
 
-    let use_gpu = env::var("USE_GPU")
-        .unwrap_or_else(|_| "true".to_string())
-        .to_lowercase()
-        == "true";
-    // Only attempt to load CUDA/CoreML when USE_GPU=true
+    let use_gpu = env::var("BOOM_GPU__ENABLED")
+        .map(|v| env_truthy(&v))
+        .unwrap_or(true);
+
+    #[cfg(target_os = "linux")]
+    if env::var_os("ORT_DYLIB_PATH").is_none() {
+        return Err(ModelError::MissingOrtDylibPath);
+    }
+
+    // Pin execution providers explicitly so CPU mode never initializes GPU EPs.
     if use_gpu {
-        // if CUDA or Apple's CoreML aren't available,
-        // it will fall back to CPU execution provider
+        // Disable CPU fallback to make sure we only use the GPUs as instructed.
+        // We only do this on Linux as Apple's CoreML EP does need to fallback
+        // to the CPU for some operators of the ONNX runtime.
+        #[cfg(target_os = "linux")]
+        {
+            builder = builder.with_disable_cpu_fallback()?;
+        }
+
+        #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+        let dev = device_id.unwrap_or(0);
+
         builder = builder.with_execution_providers([
             #[cfg(target_os = "linux")]
-            ort::execution_providers::CUDAExecutionProvider::default().build(),
+            ort::ep::CUDAExecutionProvider::default()
+                .with_device_id(dev)
+                .build(),
             #[cfg(target_os = "macos")]
-            ort::execution_providers::CoreMLExecutionProvider::default().build(),
+            ort::ep::CoreMLExecutionProvider::default().build(),
         ])?;
+    } else {
+        builder =
+            builder.with_execution_providers([ort::ep::CPUExecutionProvider::default().build()])?;
     }
 
     let model = builder
@@ -58,7 +94,6 @@ pub trait Model {
         Self: Sized;
     #[instrument(skip_all, err)]
     fn get_triplet(
-        &self,
         alert_cutouts: &[&AlertCutout],
     ) -> Result<Array<f32, Dim<[usize; 4]>>, ModelError> {
         let mut triplets = Array::zeros((alert_cutouts.len(), 63, 63, 3));
@@ -77,19 +112,40 @@ pub trait Model {
         Ok(triplets)
     }
 
-    #[instrument(skip_all)]
-    fn softmax(input: Array2<f32>) -> Array2<f32> {
-        let mut output = Array2::zeros(input.raw_dim());
+    /// Build triplets for all valid cutouts and return the original indices kept.
+    /// Invalid cutouts are skipped.
+    fn get_triplet_indexed(
+        alert_cutouts: &[&AlertCutout],
+    ) -> Result<(Vec<usize>, Array<f32, Dim<[usize; 4]>>), ModelError> {
+        let mut kept_indices: Vec<usize> = Vec::new();
+        let mut kept_triplets: Vec<(Vec<f32>, Vec<f32>, Vec<f32>)> = Vec::new();
 
-        for (i, row) in input.axis_iter(Axis(0)).enumerate() {
-            let max_val = row.iter().fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
-            let exp_values: Vec<f32> = row.iter().map(|&x| (x - max_val).exp()).collect();
-            let sum_exp: f32 = exp_values.iter().sum();
-
-            for (j, &exp_val) in exp_values.iter().enumerate() {
-                output[[i, j]] = exp_val / sum_exp;
+        for (idx, cutout) in alert_cutouts.iter().enumerate() {
+            if let Ok((science, template, difference)) = prepare_triplet(cutout) {
+                kept_indices.push(idx);
+                kept_triplets.push((science.to_vec(), template.to_vec(), difference.to_vec()));
             }
         }
-        output
+
+        if kept_indices.is_empty() {
+            return Ok((kept_indices, Array::zeros((0, 63, 63, 3))));
+        }
+
+        let mut triplets = Array::zeros((kept_indices.len(), 63, 63, 3));
+        for (i, (science, template, difference)) in kept_triplets.into_iter().enumerate() {
+            for (j, cutout) in [science, template, difference].iter().enumerate() {
+                let mut slice = triplets.slice_mut(ndarray::s![i, .., .., j]);
+                let cutout_array = Array::from_shape_vec((63, 63), cutout.clone())?;
+                slice.assign(&cutout_array);
+            }
+        }
+
+        Ok((kept_indices, triplets))
     }
+
+    fn predict(
+        &mut self,
+        metadata_features: &Array<f32, Dim<[usize; 2]>>,
+        image_features: &Array<f32, Dim<[usize; 4]>>,
+    ) -> Result<Vec<f32>, ModelError>;
 }

@@ -13,6 +13,11 @@ GREEN="\e[32m"
 RED="\e[31m"
 END="\e[0m"
 
+# A function that returns the current date and time
+current_datetime() {
+    TZ=utc date "+%Y-%m-%d %H:%M:%S"
+}
+
 if [ -z "${BOOM_REPO_ROOT:-}" ]; then
     echo "Error: BOOM_REPO_ROOT is not set; set BOOM_REPO_ROOT environment variable"
     exit 1
@@ -29,13 +34,7 @@ PERSISTENCE_DIR="$TESTS_DIR/apptainer/persistent"
 CONFIG_FILE="$TESTS_DIR/throughput/config.yaml"
 HEALTHCHECK_DIR="$BOOM_REPO_ROOT/apptainer/scripts/healthcheck"
 BENCHMARK_SIF_DIR="$TESTS_DIR/apptainer/sif"
-COMPOSE_CONFIG=("-f" "$TESTS_DIR/throughput/compose.yaml")
 BG_PIDS=()
-
-# If LOW_STORAGE mode is enabled, use the override to prevent volume mounts
-if [ "${LOW_STORAGE:-}" = "true" ]; then
-    COMPOSE_CONFIG+=("-f" "$TESTS_DIR/throughput/compose.low-storage.yaml")
-fi
 
 # Parse args
 KEEP_UP=false
@@ -67,13 +66,24 @@ if [ ${#POSITIONAL_ARGS[@]} -gt 1 ]; then
     exit 1
 fi
 
-# Arguments
-LOGS_DIR="${POSITIONAL_ARGS[0]:-$BOOM_REPO_ROOT/logs/boom_benchmark}"
+COMPOSE_CONFIG=()
+if [ "$APPTAINER" == "false" ]; then
+  COMPOSE_CONFIG=("-f" "$TESTS_DIR/throughput/compose.yaml")
+  PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 
-# A function that returns the current date and time
-current_datetime() {
-    TZ=utc date "+%Y-%m-%d %H:%M:%S"
-}
+  if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
+      echo "BOOM_GPU__ENABLED is true and platform is Linux; adding GPU override to Docker Compose configuration (CUDA support)"
+      COMPOSE_CONFIG+=("-f" "$TESTS_DIR/throughput/compose.cuda.yaml")
+  fi
+
+  # If LOW_STORAGE mode is enabled, use the override to prevent volume mounts
+  if [ "${LOW_STORAGE:-}" = "true" ]; then
+      COMPOSE_CONFIG+=("-f" "$TESTS_DIR/throughput/compose.low-storage.yaml")
+  fi
+fi
+
+# Logs folder is the optional positional argument to the script
+LOGS_DIR="${POSITIONAL_ARGS[0]:-$BOOM_REPO_ROOT/logs/boom_benchmark}"
 
 cleanup() {
     trap '' INT TERM # Ignore further signals during cleanup
@@ -200,6 +210,7 @@ if [ "$APPTAINER" == "true" ]; then
   apptainer exec --pwd /app \
     instance://benchmark_boom /app/kafka_consumer ztf 20250311 --programids public \
     > "$LOGS_DIR/consumer.log" 2>&1 &
+  BG_PIDS+=($!)
   echo -e "${GREEN}Boom consumer started for survey ztf${END}"
 
   # -----------------------------
@@ -208,6 +219,7 @@ if [ "$APPTAINER" == "true" ]; then
   echo && echo "$(current_datetime) - Starting Scheduler"
   apptainer exec --pwd /app instance://benchmark_boom /app/scheduler ztf \
     > "$LOGS_DIR/scheduler.log" 2>&1 &
+  BG_PIDS+=($!)
   echo -e "${GREEN}Boom scheduler started for survey ztf${END}"
 
 else
@@ -281,6 +293,38 @@ if [ "${LOW_STORAGE:-}" = "true" ]; then
     echo "$(current_datetime) - LOW_STORAGE mode enabled; cleaning up downloaded files to save space"
     rm -rf ./data/alerts/kowalski.NED.json.gz || true
     rm -rf ./data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz || true
+fi
+
+# If GPU support is enabled, we wait until we have confirmed that GPU inference is working.
+# On some architectures (recent GPUs, mostly) we may have to wait for CUDA to compile
+# some kernels and populate the cache before we see successful GPU inference,
+# so we wait until we see logs indicating that the ONNX CUDA warmup has completed.
+if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
+    echo "$(current_datetime) - GPU support is enabled; waiting for GPUs to be inference-ready"
+    START_TIME=$(date +%s)
+
+    if [ "$APPTAINER" == "true" ]; then
+      check_gpu_ready() {
+        grep -q "Confirmed GPU runtime preconditions, free VRAM guardrail, and GPU inference" "$LOGS_DIR/scheduler.log"
+      }
+    else
+      check_gpu_ready() {
+        docker compose "${COMPOSE_CONFIG[@]}" logs scheduler | grep -q "Confirmed GPU runtime preconditions, free VRAM guardrail, and GPU inference"
+      }
+    fi
+
+    while ! check_gpu_ready; do
+        CURRENT_TIME=$(date +%s)
+        ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+        if [ $ELAPSED_TIME -ge $TIMEOUT_SECS ]; then
+            echo "$(current_datetime) - Timeout reached while waiting for GPU inference to be validated"
+            exit 1
+        fi
+        sleep 1
+    done
+    END_TIME=$(date +%s)
+    WARMUP_TIME=$((END_TIME - START_TIME))
+    echo "$(current_datetime) - ONNX CUDA warmup completed in $WARMUP_TIME seconds"
 fi
 
 # -----------------------------
