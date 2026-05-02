@@ -188,7 +188,6 @@ if [ "$APPTAINER" == "true" ]; then
   echo && echo "$(current_datetime) - Starting BOOM instance"
   apptainer instance start \
     --env RUST_LOG=debug,ort=error \
-    --env USE_GPU=false \
     --bind "$CONFIG_FILE:/app/config.yaml" \
     --bind "$BOOM_REPO_ROOT/data/alerts:/app/data/alerts" \
     "$TESTS_DIR/apptainer/sif/boom.sif" benchmark_boom
