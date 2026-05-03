@@ -3,7 +3,8 @@ From: rust:1.93.1-slim-trixie
 
 %environment
     export PATH=/app:/opt/kafka/bin:$PATH
-    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/app/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/ort:$LD_LIBRARY_PATH
+    export ORT_DYLIB_PATH=/opt/ort/libonnxruntime.so
     # Optional overrides
     export BOOM_DATABASE__HOST=localhost
 
@@ -18,13 +19,27 @@ From: rust:1.93.1-slim-trixie
 %post
     KAFKA_VERSION=4.1.1
     SCALA_VERSION=2.13
+    ONNXRUNTIME_GPU_VERSION=1.24.4
     apt-get update && \
     apt-get install -y --no-install-recommends \
       curl gcc g++ libhdf5-dev libclang-dev perl \
       make libsasl2-dev pkg-config \
       libsasl2-2 ca-certificates \
-      openjdk-25-jre-headless tar xz-utils && \
+      openjdk-25-jre-headless tar xz-utils \
+      python3 python3-venv && \
     apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+    # Install ONNX Runtime GPU shared libs via pip, then copy them to /opt/ort
+    python3 -m venv /opt/ort-py
+    /opt/ort-py/bin/pip install --no-cache-dir "onnxruntime-gpu==${ONNXRUNTIME_GPU_VERSION}"
+    ORT_CAPI_DIR="$('/opt/ort-py/bin/python' -c 'import pathlib, onnxruntime as ort; print(pathlib.Path(ort.__file__).resolve().parent / "capi")')"
+    mkdir -p /opt/ort
+    cp "${ORT_CAPI_DIR}/libonnxruntime.so.${ONNXRUNTIME_GPU_VERSION}" /opt/ort/
+    cp "${ORT_CAPI_DIR}/libonnxruntime_providers_cuda.so" /opt/ort/
+    cp "${ORT_CAPI_DIR}/libonnxruntime_providers_shared.so" /opt/ort/
+    cp "${ORT_CAPI_DIR}/libonnxruntime_providers_tensorrt.so" /opt/ort/
+    ln -sf /opt/ort/libonnxruntime.so.${ONNXRUNTIME_GPU_VERSION} /opt/ort/libonnxruntime.so
+    rm -rf /opt/ort-py
 
     # Install CUDA toolkit runtime libraries
     CUDA_URL=https://developer.download.nvidia.com/compute/cuda/redist
@@ -59,12 +74,8 @@ From: rust:1.93.1-slim-trixie
     cp /app/target/release/migrate_fp_flux /app/migrate_fp_flux
     cp /app/target/release/migrate_snr /app/migrate_snr
 
-    # Preserve ONNX Runtime shared libraries needed at runtime
-    mkdir -p /app/lib
-    cp /app/target/release/libonnxruntime*.so* /app/lib/
-
     # Cleanup: remove build deps and artifacts to reduce image size
-    apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev pkg-config
+    apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev pkg-config python3-venv
     apt-get autoremove -y
     apt-get clean
     rm -rf /app/target /app/src /app/apache-avro-macros /app/Cargo.toml /app/Cargo.lock
