@@ -187,17 +187,27 @@ fi
 # Boom
 # -----------------------------
 if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "scheduler" "$2"; then
+  # Resolve BOOM image variant (CPU vs GPU) based on BOOM_GPU__ENABLED.
+  BOOM_SIF="boom.sif"
+  NV_FLAG=""
+  if [ "$2" != "consumer" ] && [ "${BOOM_GPU__ENABLED:-false}" = "true" ]; then
+    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true; using GPU-enabled Apptainer boom image with --nv flag for GPU support${END}"
+    BOOM_SIF="boom-gpu.sif"
+    NV_FLAG="--nv"
+  fi
   survey=$3
+
   if [ "$2" = "boom" ] && [ -z "$survey" ]; then
     if apptainer instance list | awk '{print $1}' | grep -xq "boom"; then
       echo && echo -e "${YELLOW}$(current_datetime) - Boom is already running${END}"
     else
       echo && echo "$(current_datetime) - Starting boom instance"
-      apptainer instance start --env-file .env \
+      apptainer instance start $NV_FLAG --env-file .env \
         --bind "$CONFIG_FILE:/app/config.yaml" \
-        "$SIF_DIR/boom.sif" boom
+        "$SIF_DIR/$BOOM_SIF" boom
     fi
     echo -e "${YELLOW}$(current_datetime) - Survey name not provided, consumer or scheduler cannot be started.${END}"
+
   elif [ -z "$survey" ]; then
     echo && echo -e "${RED}$(current_datetime) - Survey name not provided, consumer or scheduler cannot be started.${END}"
     echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
@@ -206,14 +216,15 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
     echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam${END}"
     echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional for lsst)${END}"
     echo -e "  ${BLUE}[program_id]:${END} ${GREEN}public | partnership | caltech${END} ${YELLOW}(only for ztf)${END}"
+
   else
     if apptainer instance list | awk '{print $1}' | grep -xq "boom${survey:+_$survey}"; then
       echo && echo -e "${YELLOW}$(current_datetime) - Boom is already running${END}"
     else
       echo && echo "$(current_datetime) - Starting boom${survey:+_$survey} instance"
-      apptainer instance start --nv --env-file .env \
+      apptainer instance start $NV_FLAG --env-file .env \
         --bind "$CONFIG_FILE:/app/config.yaml" \
-        "$SIF_DIR/boom.sif" "boom${survey:+_$survey}"
+        "$SIF_DIR/$BOOM_SIF" "boom${survey:+_$survey}"
       sleep 3
     fi
 

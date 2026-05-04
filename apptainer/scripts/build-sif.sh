@@ -3,42 +3,79 @@
 # Script to build SIF files using Apptainer.
 # $1 = service to build (optional):
 #     - "all" (default): builds all services
-#     - "benchmark"    : builds all services except monitoring services
+#     - "benchmark"    : builds only benchmark services (MongoDB, Kafka, Valkey, and BOOM)
 #     - "mongo"        : builds MongoDB service
 #     - "valkey"       : builds Valkey service
 #     - "kafka"        : builds Kafka service
-#     - "boom"         : builds BOOM service
+#     - "boom"         : builds BOOM service (CPU or GPU variant depending on BOOM_GPU__ENABLED)
+#     - "boom-cpu"     : builds BOOM CPU variant explicitly
+#     - "boom-gpu"     : builds BOOM GPU variant explicitly
 #     - "prometheus"   : builds Prometheus service
 #     - "otel"         : builds OpenTelemetry Collector service
 #     - "kuma"         : builds Uptime Kuma service
 
+YELLOW="\e[33m"
+END="\e[0m"
+
 mkdir -p apptainer/sif
+
+# Load environment variables from .env file (for BOOM_GPU__ENABLED)
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
+
+# A function that returns the current date and time
+current_datetime() {
+    TZ=utc date "+%Y-%m-%d %H:%M:%S"
+}
 
 start_service() {
     local service="$1"
     local target="$2"
-    # Return 0 if target is empty, "all", "benchmark" or matches the service name
-    [[ -z "$target" || "$target" = "all" || "$target" = "benchmark" || "$target" = "$service" ]]
+    # Return 0 (true) if target is empty, "all" or matches the service name
+    [[ -z "$target" || "$target" = "all" || "$target" = "$service" ]]
 }
 
-build() {
-    apptainer build --force apptainer/sif/"$1".sif "${2:-apptainer/def/$1.def}"
-}
+# -----------------------------
+# Build SIF files for the benchmark
+# -----------------------------
+if [ "$1" == "benchmark" ]; then
+  # Build BOOM
+  BOOM="boom" # default BOOM variant
+  if [ "${BOOM_GPU__ENABLED:-false}" == "true" ]; then
+    BOOM="boom-gpu"
+  fi
+  apptainer build --force "apptainer/sif/${BOOM}.sif" "apptainer/def/${BOOM}.def"
 
-declare -a services=("mongo" "valkey" "kafka" "boom" "api")
-for service in "${services[@]}"; do
+  # Build other benchmark services (excluding monitoring services)
+  mkdir -p "tests/apptainer/sif"
+  for service in mongo kafka valkey; do
+    apptainer build --force "tests/apptainer/sif/$service.sif" "tests/apptainer/def/$service.def"
+  done
+
+  exit 0
+fi
+
+# -----------------------------
+# Build SIF files for individual services
+# -----------------------------
+if start_service "boom" "$1" || [ "$1" = "boom-gpu" ] || [ "$1" = "boom-cpu" ]; then
+  BOOM="boom" # default BOOM variant
+  if [[ "$1" == "boom-gpu" ]] || { start_service "boom" "$1" && [[ "${BOOM_GPU__ENABLED:-false}" == "true" ]]; }; then
+    echo -e "${YELLOW}$(current_datetime) - Building GPU-enabled Apptainer boom image${END}"
+    BOOM="boom-gpu"
+  fi
+  apptainer build --force apptainer/sif/"$BOOM".sif apptainer/def/"$BOOM".def
+fi
+
+if start_service "otel" "$1"; then
+  apptainer build --force apptainer/sif/otel.sif "docker://otel/opentelemetry-collector:0.131.1"
+fi
+
+for service in mongo kafka valkey api prometheus kuma; do
   if start_service "$service" "$1"; then
-    build "$service"
+    apptainer build --force apptainer/sif/"$service".sif apptainer/def/"$service".def
   fi
 done
-
-
-declare -a monitoring_services=("prometheus" "otel docker://otel/opentelemetry-collector:0.131.1" "kuma")
-if [ "$1" != "benchmark" ]; then
-  for service in "${monitoring_services[@]}"; do
-    read -r name def <<< "$service" # split service if a def is provided
-    if start_service "$name" "$1"; then
-      build "$name" "$def"
-    fi
-  done
-fi

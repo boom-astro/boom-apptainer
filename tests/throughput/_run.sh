@@ -186,11 +186,18 @@ if [ "$APPTAINER" == "true" ]; then
   # Start Boom
   # -----------------------------
   echo && echo "$(current_datetime) - Starting BOOM instance"
-  apptainer instance start \
+  BOOM_SIF="boom.sif"
+  NV_FLAG=""
+  if [ "${BOOM_GPU__ENABLED:-false}" = "true" ]; then
+    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true; using GPU-enabled Apptainer boom image with --nv flag for GPU support${END}"
+    BOOM_SIF="boom-gpu.sif"
+    NV_FLAG="--nv"
+  fi
+  apptainer instance start $NV_FLAG \
     --env RUST_LOG=debug,ort=error \
     --bind "$CONFIG_FILE:/app/config.yaml" \
     --bind "$BOOM_REPO_ROOT/data/alerts:/app/data/alerts" \
-    "$TESTS_DIR/apptainer/sif/boom.sif" benchmark_boom
+    "$TESTS_DIR/apptainer/sif/$BOOM_SIF" benchmark_boom
   sleep 3
 
   # -----------------------------

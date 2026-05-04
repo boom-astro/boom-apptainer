@@ -1,9 +1,9 @@
 Bootstrap: docker
-From: rust:1.93.1-slim-trixie
+From: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 %environment
-    export PATH=/app:/opt/kafka/bin:$PATH
-    export LD_LIBRARY_PATH=/opt/ort:$LD_LIBRARY_PATH
+    export PATH=/app:/opt/kafka/bin:/root/.cargo/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/ort:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
     export ORT_DYLIB_PATH=/opt/ort/libonnxruntime.so
     # Optional overrides
     export BOOM_DATABASE__HOST=localhost
@@ -19,24 +19,33 @@ From: rust:1.93.1-slim-trixie
 %post
     KAFKA_VERSION=4.1.1
     SCALA_VERSION=2.13
-    ONNXRUNTIME_VERSION=1.24.4
+    ONNXRUNTIME_GPU_VERSION=1.24.4
+    RUST_VERSION=1.93.1
+    export DEBIAN_FRONTEND=noninteractive
+
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      curl gcc g++ libhdf5-dev libclang-dev perl \
-      make libsasl2-dev pkg-config \
-      libsasl2-2 ca-certificates \
-      openjdk-25-jre-headless tar xz-utils \
+      ca-certificates curl bash tar xz-utils \
+      gcc g++ libhdf5-dev libclang-dev perl make \
+      libsasl2-dev libsasl2-2 pkg-config \
+      default-jre-headless \
       python3 python3-venv && \
     apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-    # Install ONNX Runtime CPU shared libs via pip, then copy them to /opt/ort
+    # Install Rust toolchain (build only, removed at the end)
+    curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ${RUST_VERSION}
+    export PATH="/root/.cargo/bin:$PATH"
+
+    # Install ONNX Runtime GPU shared libs via pip, then copy them to /opt/ort
     python3 -m venv /opt/ort-py
-    /opt/ort-py/bin/pip install --no-cache-dir "onnxruntime==${ONNXRUNTIME_VERSION}"
+    /opt/ort-py/bin/pip install --no-cache-dir "onnxruntime-gpu==${ONNXRUNTIME_GPU_VERSION}"
     ORT_CAPI_DIR="$('/opt/ort-py/bin/python' -c 'import pathlib, onnxruntime as ort; print(pathlib.Path(ort.__file__).resolve().parent / "capi")')"
     mkdir -p /opt/ort
-    cp "${ORT_CAPI_DIR}/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /opt/ort/
+    cp "${ORT_CAPI_DIR}/libonnxruntime.so.${ONNXRUNTIME_GPU_VERSION}" /opt/ort/
+    cp "${ORT_CAPI_DIR}/libonnxruntime_providers_cuda.so" /opt/ort/
     cp "${ORT_CAPI_DIR}/libonnxruntime_providers_shared.so" /opt/ort/
-    ln -sf /opt/ort/libonnxruntime.so.${ONNXRUNTIME_VERSION} /opt/ort/libonnxruntime.so
+    cp "${ORT_CAPI_DIR}/libonnxruntime_providers_tensorrt.so" /opt/ort/
+    ln -sf /opt/ort/libonnxruntime.so.${ONNXRUNTIME_GPU_VERSION} /opt/ort/libonnxruntime.so
     rm -rf /opt/ort-py
 
     # Install Kafka CLI tools
@@ -59,5 +68,5 @@ From: rust:1.93.1-slim-trixie
     apt-get autoremove -y
     apt-get clean
     rm -rf /app/target /app/src /app/apache-avro-macros /app/Cargo.toml /app/Cargo.lock
-    rm -rf /root/.cargo /usr/local/cargo /usr/local/rustup
+    rm -rf /root/.cargo /root/.rustup
     rm -rf /var/lib/apt/lists/*
