@@ -203,7 +203,8 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       echo && echo -e "${YELLOW}$(current_datetime) - Boom is already running${END}"
     else
       echo && echo "$(current_datetime) - Starting boom instance"
-      apptainer instance start $NV_FLAG --env-file .env \
+      apptainer instance start $NV_FLAG \
+        --bind "$BOOM_DIR/.env:/app/.env" \
         --bind "$CONFIG_FILE:/app/config.yaml" \
         "$SIF_DIR/$BOOM_SIF" boom
     fi
@@ -223,7 +224,8 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       echo && echo -e "${YELLOW}$(current_datetime) - Boom is already running${END}"
     else
       echo && echo "$(current_datetime) - Starting boom${survey:+_$survey} instance"
-      apptainer instance start $NV_FLAG --env-file .env \
+      apptainer instance start $NV_FLAG \
+        --bind "$BOOM_DIR/.env:/app/.env" \
         --bind "$CONFIG_FILE:/app/config.yaml" \
         "$SIF_DIR/$BOOM_SIF" "boom${survey:+_$survey}"
       sleep 3
@@ -287,7 +289,8 @@ if start_service "api" "$2"; then
     echo && echo -e "${YELLOW}$(current_datetime) - API instance is already running${END}"
   else
     echo && echo "$(current_datetime) - Starting API instance"
-    apptainer instance start --env-file .env \
+    apptainer instance start \
+      --bind "$BOOM_DIR/.env:/app/.env" \
       --bind "$CONFIG_FILE:/app/config.yaml" \
       "$SIF_DIR/api.sif" api
     sleep 3
