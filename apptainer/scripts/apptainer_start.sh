@@ -187,15 +187,16 @@ fi
 # Boom
 # -----------------------------
 if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "scheduler" "$2"; then
+  survey=$3
   # Resolve BOOM image variant (CPU vs GPU) based on BOOM_GPU__ENABLED.
+  # Only ZTF actually uses the GPU; LSST/DECam always run on CPU.
   BOOM_SIF="boom.sif"
   NV_FLAG=""
   if [ "$2" != "consumer" ] && [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$survey" = "ztf" ]; then
-    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true; using GPU-enabled Apptainer boom image with --nv flag for GPU support${END}"
+    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true and survey is ztf; using GPU-enabled Apptainer boom image with --nv flag for GPU support${END}"
     BOOM_SIF="boom-gpu.sif"
     NV_FLAG="--nv"
   fi
-  survey=$3
 
   if [ "$2" = "boom" ] && [ -z "$survey" ]; then
     if apptainer instance list | awk '{print $1}' | grep -xq "boom"; then
