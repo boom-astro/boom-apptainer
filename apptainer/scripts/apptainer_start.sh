@@ -190,7 +190,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
   # Resolve BOOM image variant (CPU vs GPU) based on BOOM_GPU__ENABLED.
   BOOM_SIF="boom.sif"
   NV_FLAG=""
-  if [ "$2" != "consumer" ] && [ "${BOOM_GPU__ENABLED:-false}" = "true" ]; then
+  if [ "$2" != "consumer" ] && [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$survey" = "ztf" ]; then
     echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true; using GPU-enabled Apptainer boom image with --nv flag for GPU support${END}"
     BOOM_SIF="boom-gpu.sif"
     NV_FLAG="--nv"
