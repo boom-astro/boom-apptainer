@@ -8,6 +8,7 @@
 #      - boom        : starts boom instance and scheduler/consumer if survey name/date provided
 #      - consumer    : starts the consumer process
 #      - scheduler   : starts the scheduler process
+#      - dev         : starts the BOOM dev instance (source bind-mounted; opt-in, not part of "all")
 #      - mongo       : starts the MongoDB instance
 #      - kafka       : starts the kafka instance
 #      - valkey      : starts the Valkey instance
@@ -53,11 +54,35 @@ start_service() {
 }
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
-  && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
+  && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
   && [ "$2" != "otel" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | mongo | kafka | valkey | prometheus | otel | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | listener | kuma | all${END}"
   exit 1
+fi
+
+# -----------------------------
+# BOOM dev
+# -----------------------------
+if [ "$2" = "dev" ]; then
+  mkdir -p "$PERSISTENT_DIR/target"
+  if apptainer instance list | awk '{print $1}' | grep -xq "dev"; then
+    echo -e "${YELLOW}$(current_datetime) - dev instance is already running${END}"
+    exit 0
+  fi
+  echo "$(current_datetime) - Starting dev instance"
+  apptainer instance start \
+    --bind "$BOOM_DIR/.env:/app/.env" \
+    --bind "$CONFIG_FILE:/app/config.yaml" \
+    --bind "$BOOM_DIR/src:/app/src" \
+    --bind "$BOOM_DIR/Cargo.toml:/app/Cargo.toml" \
+    --bind "$BOOM_DIR/Cargo.lock:/app/Cargo.lock" \
+    --bind "$BOOM_DIR/apache-avro-macros:/app/apache-avro-macros" \
+    --bind "$BOOM_DIR/data:/app/data" \
+    --bind "$PERSISTENT_DIR/target:/app/target" \
+    "$SIF_DIR/dev.sif" dev
+  echo -e "${GREEN}Boom dev instance started${END}"
+  exit 0
 fi
 
 # -----------------------------

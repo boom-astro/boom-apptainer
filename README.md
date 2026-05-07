@@ -169,16 +169,25 @@ See [docs/gpu.md](docs/gpu.md) for container-vs-native details, troubleshooting,
 
    - With Apptainer, using the shell script `apptainer.sh`:
 
-     First, build the SIF files. You can do this by running:
+     First, build the SIF files of all the services and the boom dev image. You can do this by running:
        ```bash
        ./apptainer.sh build
+       ./apptainer.sh build dev
        ```
-       Then you can launch the services with:
+     Then you can launch all the services with:
+       ```bash
+       ./apptainer.sh start
+       ```
+     Then start the dev instance:
        ```bash
        ./apptainer.sh start dev
        ```
      *To check if the instances are running and healthy, run `./apptainer.sh health`.*
-
+     Shell in and run whatever you need with hot-reloading:
+       ```bash
+       apptainer shell instance://dev
+       cargo watch -w src -x 'run --bin scheduler -- ztf'
+       ```
 
 3. Produce alerts for testing:
 

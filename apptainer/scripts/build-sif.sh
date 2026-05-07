@@ -3,6 +3,7 @@
 # Script to build SIF files using Apptainer.
 # $1 = service to build (optional):
 #     - "all" (default): builds all services
+#     - "dev"          : builds the BOOM dev image (no source baked in; bind-mounted at runtime for hot reload)
 #     - "benchmark"    : builds only benchmark services (MongoDB, Kafka, Valkey, and BOOM)
 #     - "mongo"        : builds MongoDB service
 #     - "valkey"       : builds Valkey service
@@ -59,7 +60,15 @@ if [ "$1" == "benchmark" ]; then
 fi
 
 # -----------------------------
-# Build SIF files for individual services
+# Build SIF file for BOOM dev image
+# -----------------------------
+if [ "$1" = "dev" ]; then
+  apptainer build --force apptainer/sif/dev.sif apptainer/def/dev.def
+  exit 0
+fi
+
+# -----------------------------
+# Build SIF files for BOOM services
 # -----------------------------
 if start_service "boom" "$1" || [ "$1" = "boom-gpu" ] || [ "$1" = "boom-cpu" ]; then
   BOOM="boom" # default BOOM variant

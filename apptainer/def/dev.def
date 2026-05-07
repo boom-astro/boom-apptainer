@@ -2,17 +2,45 @@ Bootstrap: docker
 From: rust:1.93.1-slim-trixie
 
 %environment
+    export PATH=/app:/opt/kafka/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/ort:$LD_LIBRARY_PATH
+    export ORT_DYLIB_PATH=/opt/ort/libonnxruntime.so
     export BOOM_DATABASE__HOST=localhost
+    # Persist cargo registry/git cache in the user's home so rebuilds stay fast
+    # across instance restarts (apptainer auto-mounts $HOME).
     export CARGO_HOME=$HOME/.cargo-apptainer
 
 %post
+    KAFKA_VERSION=4.1.1
+    SCALA_VERSION=2.13
+    ONNXRUNTIME_VERSION=1.24.4
     apt-get update && \
     apt-get install -y --no-install-recommends \
       curl gcc g++ libhdf5-dev libclang-dev perl \
       make libsasl2-dev pkg-config \
-      libsasl2-2 ca-certificates && \
+      libsasl2-2 ca-certificates \
+      openjdk-25-jre-headless tar xz-utils \
+      python3 python3-venv && \
     apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+    # Install ONNX Runtime CPU shared libs via pip, then copy them to /opt/ort
+    python3 -m venv /opt/ort-py
+    /opt/ort-py/bin/pip install --no-cache-dir "onnxruntime==${ONNXRUNTIME_VERSION}"
+    ORT_CAPI_DIR="$('/opt/ort-py/bin/python' -c 'import pathlib, onnxruntime as ort; print(pathlib.Path(ort.__file__).resolve().parent / "capi")')"
+    mkdir -p /opt/ort
+    cp "${ORT_CAPI_DIR}/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /opt/ort/
+    cp "${ORT_CAPI_DIR}/libonnxruntime_providers_shared.so" /opt/ort/
+    ln -sf /opt/ort/libonnxruntime.so.${ONNXRUNTIME_VERSION} /opt/ort/libonnxruntime.so
+    rm -rf /opt/ort-py
+
+    # Install Kafka CLI tools
+    curl -fsSL https://dlcdn.apache.org/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz -o /tmp/kafka.tgz && \
+    tar -xzf /tmp/kafka.tgz -C /opt && \
+    ln -s /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
+    rm -f /tmp/kafka.tgz
+
+    # cargo-watch for hot-reload of bind-mounted source
+    cargo install --locked cargo-watch
+
 %runscript
-    echo "$APP_DIR"
-    cd "$APP_DIR" && exec "$@"
+    cd /app && exec "$@"
