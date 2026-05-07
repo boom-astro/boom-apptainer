@@ -189,7 +189,7 @@ if [ "$APPTAINER" == "true" ]; then
   BOOM_SIF="boom.sif"
   NV_FLAG=""
   if [ "${BOOM_GPU__ENABLED:-false}" = "true" ]; then
-    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true; using GPU-enabled Apptainer boom image with --nv flag for GPU support${END}"
+    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true; using BOOM GPU image with --nv flag for GPU support${END}"
     BOOM_SIF="boom-gpu.sif"
     NV_FLAG="--nv"
   fi
