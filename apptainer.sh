@@ -95,11 +95,11 @@ fi
 if [ "$1" == "stop" ]; then
   target="$2"
   if [ -n "$target" ] && [ "$target" != "all" ] && [[ "$target" != boom* ]] && [ "$target" != "consumer" ] && [ "$target" != "scheduler" ] \
-    && [ "$target" != "api" ] && [ "$target" != "mongo" ] && [ "$target" != "kafka" ] && [ "$target" != "valkey" ] \
+    && [ "$target" != "api" ] && [ "$target" != "dev" ] && [ "$target" != "mongo" ] && [ "$target" != "kafka" ] && [ "$target" != "valkey" ] \
     && [ "$target" != "prometheus" ] && [ "$target" != "otel" ] && [ "$target" != "listener" ] && [ "$target" != "kuma" ]; then
     echo -e "${RED}Error: Invalid service name '$target'.${END}"
     echo -e "Usage: ${BLUE}$0 stop [service|all|'empty']${END} ${YELLOW}('empty' will default to all)${END}"
-    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | mongo | kafka | valkey | prometheus | otel | listener | kuma ${END}"
+    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | listener | kuma ${END}"
     exit 1
   fi
 
@@ -118,6 +118,9 @@ if [ "$1" == "stop" ]; then
   if stop_service "api" "$target"; then
     apptainer instance stop api
   fi
+  if stop_service "dev" "$target"; then
+      apptainer instance stop dev
+    fi
   if stop_service "boom" "$target"; then
     if [ "$target" = "boom" ] && [ -n "$3" ]; then
       apptainer instance stop "boom_$3"
