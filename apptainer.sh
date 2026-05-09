@@ -64,7 +64,7 @@ fi
 # -----------------------------
 if [ "$1" = "build" ]; then
   # See build-sif.sh for the full explanation of the argument
-  ./apptainer/scripts/build-sif.sh "$2"
+  ./apptainer/scripts/build-sif.sh "${@:2}"
   exit 0
 fi
 
