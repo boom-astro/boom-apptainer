@@ -206,9 +206,26 @@ if [ "$1" == "benchmark" ]; then
   if [ "$2" == "init" ]; then
     pip install pandas pyyaml astropy confluent-kafka
   fi
+
   # If "init" or "build" is passed, build the SIF files needed for the benchmark
   if [ "$2" == "init" ] || [ "$2" == "build" ]; then
     "$0" build benchmark
+  fi
+
+  # Check if "gpu" is passed as an argument to enable GPU benchmark mode
+  if [ "$2" == "gpu" ] || [ "$3" == "gpu" ]; then
+    # Capture GPU device IDs from the arg right after "gpu" (optional, comma-separated, e.g. 0,1,2,3)
+    if [ "$2" == "gpu" ]; then
+      gpu_ids="$3"
+    elif [ "$3" == "gpu" ]; then
+      gpu_ids="$4"
+    fi
+    echo -e "${YELLOW}GPU benchmark mode enabled. Setting BOOM_GPU__ENABLED to true.${END}"
+    export BOOM_GPU__ENABLED=true
+    if [ -n "$gpu_ids" ]; then
+      echo -e "${YELLOW}Using GPU device IDs: $gpu_ids (count: $(($(echo "$gpu_ids" | tr -cd ',' | wc -c) + 1)))${END}"
+      export BOOM_GPU__DEVICE_IDS="$gpu_ids"
+    fi
   fi
 
   # Run the benchmark
