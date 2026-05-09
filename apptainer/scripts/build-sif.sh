@@ -4,7 +4,11 @@
 # $1 = service to build (optional):
 #     - "all" (default): builds all services
 #     - "dev"          : builds the BOOM dev image (no source baked in; bind-mounted at runtime for hot reload)
-#     - "benchmark"    : builds only benchmark services (MongoDB, Kafka, Valkey, and BOOM)
+#     - "benchmark"    : builds benchmark services (MongoDB, Kafka, Valkey, BOOM CPU, BOOM GPU)
+#                        Optional $2 to restrict to a single BOOM variant:
+#                            "boom"     : CPU or GPU depending on BOOM_GPU__ENABLED
+#                            "boom-cpu" : CPU only
+#                            "boom-gpu" : GPU only
 #     - "mongo"        : builds MongoDB service
 #     - "valkey"       : builds Valkey service
 #     - "kafka"        : builds Kafka service
@@ -42,21 +46,28 @@ start_service() {
 # -----------------------------
 # Build SIF files for the benchmark
 # -----------------------------
-if [ "$1" == "benchmark" ]; then
-  # Build BOOM
-  BOOM="boom" # default BOOM variant
-  if [ "${BOOM_GPU__ENABLED:-false}" == "true" ]; then
-    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true, building BOOM GPU image${END}"
-    BOOM="boom-gpu"
+if [ "$1" = "benchmark" ]; then
+  build_boom_variant="$2"
+
+  if [ -z "$build_boom_variant" ]; then
+    mkdir -p "tests/apptainer/sif"
+
+    # Build BOOM images for both CPU and GPU variants
+    apptainer build --force "tests/apptainer/sif/boom-gpu.sif" "apptainer/def/boom-gpu.def"
+    apptainer build --force "tests/apptainer/sif/boom.sif" "apptainer/def/boom.def"
+
+    # Build other benchmark services
+    for service in mongo kafka valkey; do
+      apptainer build --force "tests/apptainer/sif/$service.sif" "tests/apptainer/def/$service.def"
+    done
+  else
+    BOOM="boom"
+    if { [ "$build_boom_variant" = "boom" ] && [[ "${BOOM_GPU__ENABLED:-false}" = "true" ]]; } || [ "$build_boom_variant" = "boom-gpu" ]; then
+      echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
+      BOOM="boom-gpu"
+    fi
+    apptainer build --force "tests/apptainer/sif/$BOOM.sif" "apptainer/def/$BOOM.def"
   fi
-  apptainer build --force "apptainer/sif/${BOOM}.sif" "apptainer/def/${BOOM}.def"
-
-  # Build other benchmark services (excluding monitoring services)
-  mkdir -p "tests/apptainer/sif"
-  for service in mongo kafka valkey; do
-    apptainer build --force "tests/apptainer/sif/$service.sif" "tests/apptainer/def/$service.def"
-  done
-
   exit 0
 fi
 
@@ -73,7 +84,7 @@ fi
 # -----------------------------
 if start_service "boom" "$1" || [ "$1" = "boom-gpu" ] || [ "$1" = "boom-cpu" ]; then
   BOOM="boom" # default BOOM variant
-  if [[ "$1" == "boom-gpu" ]] || { start_service "boom" "$1" && [[ "${BOOM_GPU__ENABLED:-false}" == "true" ]]; }; then
+  if [[ "$1" = "boom-gpu" ]] || { start_service "boom" "$1" && [[ "${BOOM_GPU__ENABLED:-false}" = "true" ]]; }; then
     echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
     BOOM="boom-gpu"
   fi
