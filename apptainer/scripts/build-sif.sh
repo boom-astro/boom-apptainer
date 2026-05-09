@@ -46,6 +46,7 @@ if [ "$1" == "benchmark" ]; then
   # Build BOOM
   BOOM="boom" # default BOOM variant
   if [ "${BOOM_GPU__ENABLED:-false}" == "true" ]; then
+    echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true, building BOOM GPU image${END}"
     BOOM="boom-gpu"
   fi
   apptainer build --force "apptainer/sif/${BOOM}.sif" "apptainer/def/${BOOM}.def"
@@ -73,7 +74,7 @@ fi
 if start_service "boom" "$1" || [ "$1" = "boom-gpu" ] || [ "$1" = "boom-cpu" ]; then
   BOOM="boom" # default BOOM variant
   if [[ "$1" == "boom-gpu" ]] || { start_service "boom" "$1" && [[ "${BOOM_GPU__ENABLED:-false}" == "true" ]]; }; then
-    echo -e "${YELLOW}$(current_datetime) - Building GPU-enabled Apptainer boom image${END}"
+    echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
     BOOM="boom-gpu"
   fi
   apptainer build --force apptainer/sif/"$BOOM".sif apptainer/def/"$BOOM".def
