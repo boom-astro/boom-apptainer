@@ -3,8 +3,7 @@
         Python 3.13+,
         pyyaml,
         pandas>2,
-        astropy,
-        confluent-kafka
+        astropy
 """
 import argparse
 import json
