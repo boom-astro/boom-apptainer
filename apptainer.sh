@@ -226,10 +226,18 @@ if [ "$1" == "benchmark" ]; then
       echo -e "${YELLOW}Using GPU device IDs: $gpu_ids (count: $(($(echo "$gpu_ids" | tr -cd ',' | wc -c) + 1)))${END}"
       export BOOM_GPU__DEVICE_IDS="$gpu_ids"
     fi
+  else
+    echo -e "${YELLOW}GPU benchmark mode disabled. To enable, pass 'gpu' as an argument.${END}"
+    export BOOM_GPU__ENABLED=false
   fi
 
   # Run the benchmark
-  python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer
+  if [ "$2" == "keep-up" ] || [ "$3" == "keep-up" ]; then
+    echo -e "${YELLOW}Keeping services up after benchmark completion.${END}"
+    python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer --keep-up
+  else
+    python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer
+  fi
   exit 0
 fi
 
