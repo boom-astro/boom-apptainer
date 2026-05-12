@@ -72,7 +72,7 @@ if [ "$1" = "benchmark" ]; then
 fi
 
 # -----------------------------
-# Build SIF file for BOOM dev image
+# Build SIF file for BOOM dev
 # -----------------------------
 if [ "$1" = "dev" ]; then
   apptainer build --force apptainer/sif/dev.sif apptainer/def/dev.def
@@ -80,15 +80,16 @@ if [ "$1" = "dev" ]; then
 fi
 
 # -----------------------------
-# Build SIF files for BOOM services
+# Build SIF files for BOOM
 # -----------------------------
-if start_service "boom" "$1" || [ "$1" = "boom-gpu" ] || [ "$1" = "boom-cpu" ]; then
-  BOOM="boom" # default BOOM variant
-  if [[ "$1" = "boom-gpu" ]] || { start_service "boom" "$1" && [[ "${BOOM_GPU__ENABLED:-false}" = "true" ]]; }; then
-    echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
-    BOOM="boom-gpu"
-  fi
-  apptainer build --force apptainer/sif/"$BOOM".sif apptainer/def/"$BOOM".def
+if start_service "boom" "$1" || [ "$1" = "boom-gpu" ]; then
+  echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
+  apptainer build --force apptainer/sif/boom-gpu.sif apptainer/def/boom-gpu.def
+fi
+
+if start_service "boom" "$1" || [ "$1" = "boom-cpu" ]; then
+  echo -e "${YELLOW}$(current_datetime) - Building BOOM CPU image${END}"
+  apptainer build --force apptainer/sif/boom.sif apptainer/def/boom.def
 fi
 
 if start_service "otel" "$1"; then
