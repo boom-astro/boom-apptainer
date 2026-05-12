@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import subprocess
+import time
 
 import pandas as pd
 import yaml
@@ -56,6 +57,18 @@ parser.add_argument(
     action="store_true",
     help="Run the benchmark in Apptainer instead of Docker.",
 )
+parser.add_argument(
+    "--phase",
+    choices=("full", "setup", "bench", "teardown"),
+    default="full",
+    help=(
+        "Which portion of the benchmark to run. 'full' (default) is the "
+        "original end-to-end behavior. 'setup' starts services and the "
+        "producer once, leaving everything running. 'bench' assumes services "
+        "are already up and runs only the scheduler/consumer iteration. "
+        "'teardown' stops all benchmark services and exits."
+    ),
+)
 args = parser.parse_args()
 use_apptainer = args.apptainer
 hosts = {
@@ -68,71 +81,82 @@ ports = {
     "redis": 6380 if use_apptainer else 6379,
     "kafka": 29192 if use_apptainer else 29092,
 }
-with open(os.path.join(args.boom_repo_dir, "config.yaml"), "r") as f:
-    config = yaml.safe_load(f)
-config["database"]["host"] = hosts["mongo"]
-config["database"]["port"] = ports["mongo"]
-config["database"]["name"] = "boom-benchmarking"
-config["database"]["password"] = "mongoadminsecret"
-config["redis"]["host"] = hosts["redis"]
-config["redis"]["port"] = ports["redis"]
-config["kafka"]["consumer"]["ztf"]["server"] = f"{hosts['kafka']}:{ports['kafka']}"
-config["kafka"]["consumer"]["ztf"]["group_id"] = "throughput-benchmarking"
-config["kafka"]["producer"]["server"] = f"{hosts['kafka']}:{ports['kafka']}"
-config["api"]["port"] = 4000
-config["api"]["auth"]["secret_key"] = "1234"
-config["api"]["auth"]["admin_password"] = "adminsecret"
-config["babamul"]["enabled"] = True
-config["workers"]["ztf"]["alert"]["n_workers"] = args.n_alert_workers
-config["workers"]["ztf"]["enrichment"]["n_workers"] = args.n_enrichment_workers
-config["workers"]["ztf"]["filter"]["n_workers"] = args.n_filter_workers
-with open(
-    os.path.join(args.boom_repo_dir, "tests", "throughput", "config.yaml"), "w"
-) as f:
-    yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+# Config / filter files are only needed when the bench actually starts something
+# inside BOOM (setup, bench, full). Teardown only stops instances and reads
+# nothing on disk, so we skip those writes.
+if args.phase != "teardown":
+    with open(os.path.join(args.boom_repo_dir, "config.yaml"), "r") as f:
+        config = yaml.safe_load(f)
+    config["database"]["host"] = hosts["mongo"]
+    config["database"]["port"] = ports["mongo"]
+    config["database"]["name"] = "boom-benchmarking"
+    config["database"]["password"] = "mongoadminsecret"
+    config["redis"]["host"] = hosts["redis"]
+    config["redis"]["port"] = ports["redis"]
+    config["kafka"]["consumer"]["ztf"]["server"] = f"{hosts['kafka']}:{ports['kafka']}"
+    # Use a unique group_id per invocation so warm sweeps (where Kafka persists
+    # across iterations) do not pay a multi-second rebalance penalty waiting
+    # for the previous iteration's consumer to drop out of the group. BOOM's
+    # consumer seeks to a timestamp on startup, so committed offsets are not
+    # used and orphaning the previous group is harmless.
+    config["kafka"]["consumer"]["ztf"]["group_id"] = (
+        f"throughput-benchmarking-{time.time_ns()}"
+    )
+    config["kafka"]["producer"]["server"] = f"{hosts['kafka']}:{ports['kafka']}"
+    config["api"]["port"] = 4000
+    config["api"]["auth"]["secret_key"] = "1234"
+    config["api"]["auth"]["admin_password"] = "adminsecret"
+    config["babamul"]["enabled"] = True
+    config["workers"]["ztf"]["alert"]["n_workers"] = args.n_alert_workers
+    config["workers"]["ztf"]["enrichment"]["n_workers"] = args.n_enrichment_workers
+    config["workers"]["ztf"]["filter"]["n_workers"] = args.n_filter_workers
+    with open(
+        os.path.join(args.boom_repo_dir, "tests", "throughput", "config.yaml"), "w"
+    ) as f:
+        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
-# Reformat filter for insertion into database
-with open(
-    os.path.join(
-        args.boom_repo_dir, "tests", "throughput", "cats150.pipeline.json"
-    ),
-    "r",
-) as f:
-    cats150 = json.load(f)
+    # Reformat filter for insertion into database
+    with open(
+        os.path.join(
+            args.boom_repo_dir, "tests", "throughput", "cats150.pipeline.json"
+        ),
+        "r",
+    ) as f:
+        cats150 = json.load(f)
 
-now_jd = Time.now().jd
-for_insert = {
-    "_id": "replaced-in-mongo-init-script",
-    "name": "cats150-replaced-in-mongo-init-script",
-    "survey": "ZTF",
-    "user_id": "benchmarking",
-    "permissions": {"ZTF": [1, 2, 3]},
-    "active": True,
-    "active_fid": "first",
-    "fv": [
-        {
-            "fid": "first",
-            "created_at": now_jd,
-            "pipeline": json.dumps(cats150),
-        }
-    ],
-    "created_at": now_jd,
-    "updated_at": now_jd,
-}
-with open(
-    os.path.join(
-        args.boom_repo_dir, "tests", "throughput", "cats150.filter.json"
-    ),
-    "w",
-) as f:
-    json.dump(for_insert, f)
+    now_jd = Time.now().jd
+    for_insert = {
+        "_id": "replaced-in-mongo-init-script",
+        "name": "cats150-replaced-in-mongo-init-script",
+        "survey": "ZTF",
+        "user_id": "benchmarking",
+        "permissions": {"ZTF": [1, 2, 3]},
+        "active": True,
+        "active_fid": "first",
+        "fv": [
+            {
+                "fid": "first",
+                "created_at": now_jd,
+                "pipeline": json.dumps(cats150),
+            }
+        ],
+        "created_at": now_jd,
+        "updated_at": now_jd,
+    }
+    with open(
+        os.path.join(
+            args.boom_repo_dir, "tests", "throughput", "cats150.filter.json"
+        ),
+        "w",
+    ) as f:
+        json.dump(for_insert, f)
 
 if os.environ.get("BOOM_GPU__ENABLED", "false").lower() == "true":
-    n_gpus = len(
+    gpus = len(
         [d for d in os.environ.get("BOOM_GPU__DEVICE_IDS", "0").split(",") if d.strip()]
     )
 else:
-    n_gpus = 0
+    gpus = 0
 
 logs_dir = os.path.join(
     f"{args.boom_repo_dir}/logs",
@@ -140,8 +164,8 @@ logs_dir = os.path.join(
     + (
         f"na={args.n_alert_workers}-"
         f"ne={args.n_enrichment_workers}-"
-        f"nf={args.n_filter_workers}"
-        f"ng={n_gpus}"
+        f"nf={args.n_filter_workers}-"
+        f"gpu={gpus}"
     ),
 )
 
@@ -155,12 +179,20 @@ cmd = [
     "bash",
     os.path.join(args.boom_repo_dir, "tests", "throughput", "_run.sh"),
     logs_dir,
+    "--phase",
+    args.phase,
 ]
 if args.keep_up:
     cmd.append("--keep-up")
 if use_apptainer:
     cmd.append("--apptainer")
 subprocess.run(cmd, check=True)
+
+# Only the bench/full phases produce a scheduler.log + consumer.log pair from
+# which we can compute the BOOM wall time. Setup leaves the cluster warm and
+# teardown stops it; neither has anything to measure here.
+if args.phase not in ("full", "bench"):
+    raise SystemExit(0)
 
 # Now analyze the logs and raise an error if we're too slow
 t1_b, t2_b = None, None

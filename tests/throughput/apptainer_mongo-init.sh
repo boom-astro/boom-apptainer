@@ -3,6 +3,9 @@
 MONGO_URI="mongodb://mongoadmin:mongoadminsecret@localhost:${BENCHMARK_MONGO_PORT:-27018}"
 
 NED_EXPECTED_COUNT=1872544
+EXPECTED_AUX_ALERTS=27948
+SNAPSHOT_COLLECTION_NAME="ZTF_alerts_aux_snapshot"
+N_FILTERS=25
 
 # Only import NED alerts if the collection does not exist or has the wrong count
 NED_COLLECTION_NAME="NED"
@@ -45,59 +48,86 @@ else
     echo "NED alerts already imported with correct count ($NED_COLLECTION_COUNT); skipping import"
 fi
 
-# Always drop ZTF_alerts, ZTF_alerts_aux, ZTF_alerts_cutouts, and filters collections
+# Drop all mutable collections in a single mongosh call. ZTF_alerts_aux_snapshot
+# is deliberately preserved across runs so that subsequent setups (in the same
+# Mongo data dir) can restore ZTF_alerts_aux from it without re-running
+# mongorestore on the 2.8GB gzipped archive.
 mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
     db.ZTF_alerts.drop();
     db.ZTF_alerts_aux.drop();
     db.ZTF_alerts_cutouts.drop();
     db.filters.drop();"
 
-# add the filters table with an index on filter_id
-mongosh "$MONGO_URI/$DB_NAME?authSource=admin" \
-    --eval "db.createCollection('filters'); db.filters.createIndex({ filter_id: 1 })"
+# Create the filters collection + filter_id index, then bulk-insert N_FILTERS
+# copies of cats150 in a single mongosh invocation. The previous implementation
+# spawned one mongosh process per filter (and two jq processes each), which
+# cost ~30-50s of JVM/mongosh startup on top of the actual inserts.
+echo "Ingesting $N_FILTERS copies of the cats150 filter into filters collection (batched)"
+mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
+    const fs = require('fs');
+    const baseFilter = JSON.parse(fs.readFileSync('/cats150.filter.json', 'utf8'));
+    function readUuid() {
+        return fs.readFileSync('/proc/sys/kernel/random/uuid', 'utf8').trim();
+    }
+    db.createCollection('filters');
+    db.filters.createIndex({ filter_id: 1 });
+    const docs = [];
+    for (let i = 1; i <= $N_FILTERS; i++) {
+        const copy = JSON.parse(JSON.stringify(baseFilter));
+        copy._id = readUuid();
+        copy.name = 'cats150_' + i;
+        docs.push(copy);
+    }
+    const result = db.filters.insertMany(docs);
+    print('Inserted ' + Object.keys(result.insertedIds).length + ' filters');
+"
 
-N_FILTERS=25
+# ZTF_alerts_aux restore: prefer the in-server snapshot when present.
+# - First-ever setup: snapshot is missing, so mongorestore from the gzipped
+#   archive populates ZTF_alerts_aux, then we materialize the snapshot.
+# - Subsequent setups (same Mongo data dir): snapshot is already there, so we
+#   skip mongorestore entirely and copy ZTF_alerts_aux <- snapshot via $out.
+#   The server-side $out copy takes a few seconds vs ~30-60s for mongorestore.
+SNAPSHOT_COUNT=$(mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
+    const target = '$SNAPSHOT_COLLECTION_NAME';
+    db.getCollectionNames().includes(target) ? db.getCollection(target).countDocuments() : 0
+")
+SNAPSHOT_COUNT=${SNAPSHOT_COUNT:-0}
 
-# have a function to randomly generate a UUID
-generate_uuid() {
-    cat /proc/sys/kernel/random/uuid
-}
+if [ "$SNAPSHOT_COUNT" -eq "$EXPECTED_AUX_ALERTS" ]; then
+    echo "$SNAPSHOT_COLLECTION_NAME is present with $SNAPSHOT_COUNT documents; restoring ZTF_alerts_aux from snapshot"
+    mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
+        db.$SNAPSHOT_COLLECTION_NAME.aggregate([{ \$out: 'ZTF_alerts_aux' }]);"
+else
+    echo "$SNAPSHOT_COLLECTION_NAME missing or stale (count=$SNAPSHOT_COUNT, expected=$EXPECTED_AUX_ALERTS); loading from gzipped archive"
+    mongorestore --uri="$MONGO_URI/?authSource=admin" \
+        --gzip \
+        --archive=/boom_throughput.ZTF_alerts_aux.dump.gz \
+        --nsInclude='boom_throughput.ZTF_alerts_aux' \
+        --nsFrom='boom_throughput.ZTF_alerts_aux' \
+        --nsTo="$DB_NAME.ZTF_alerts_aux"
 
-# ingest N_FILTERS copies of the cats150 filter into filters collection
-echo "Ingesting $N_FILTERS copies of the cats150 filter into filters collection"
-for i in $(seq 1 $N_FILTERS); do
-    echo "Inserting cats150 filter with filter_id $i into filters collection"
-    # the file contains one document, so we read and edit the filter _id field
-    EDITED_FILTER_CONTENT=$(jq --arg id "$(generate_uuid)" '._id = $id' /cats150.filter.json)
-    # also edit the name field to be "cats150_$i"
-    EDITED_FILTER_CONTENT=$(echo "$EDITED_FILTER_CONTENT" | jq --arg name "cats150_$i" '.name = $name')
-    ADDED=$(mongosh "$MONGO_URI/$DB_NAME?authSource=admin" \
-        --eval "db.filters.insertOne($EDITED_FILTER_CONTENT)")
-    if [ $? -ne 0 ]; then
-        echo "Failed to insert filter with filter_id $i: $ADDED"
+    echo "Materializing $SNAPSHOT_COLLECTION_NAME for future fast restores"
+    mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
+        db.ZTF_alerts_aux.aggregate([{ \$out: '$SNAPSHOT_COLLECTION_NAME' }]);"
+    SNAPSHOT_COUNT=$(mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "db.getCollection('$SNAPSHOT_COLLECTION_NAME').countDocuments()")
+    if [ "${SNAPSHOT_COUNT:-0}" -ne "$EXPECTED_AUX_ALERTS" ]; then
+        echo "Failed to build $SNAPSHOT_COLLECTION_NAME: expected $EXPECTED_AUX_ALERTS but got $SNAPSHOT_COUNT"
         exit 1
     fi
-done
+    echo "Built $SNAPSHOT_COLLECTION_NAME with $SNAPSHOT_COUNT documents"
+fi
 
-# Now we load the ZTF_alerts_aux table with the history for all the objects detected on 2025-03-11
-echo "Loading ZTF_alerts_aux collection from archive into $DB_NAME"
-mongorestore --uri="$MONGO_URI/?authSource=admin" \
-    --gzip \
-    --archive=/boom_throughput.ZTF_alerts_aux.dump.gz \
-    --nsInclude='boom_throughput.ZTF_alerts_aux' \
-    --nsFrom='boom_throughput.ZTF_alerts_aux' \
-    --nsTo="$DB_NAME.ZTF_alerts_aux"
 mongosh "$MONGO_URI/$DB_NAME?authSource=admin" \
     --eval "db.ZTF_alerts_aux.createIndex({ 'coordinates.radec_geojson': '2dsphere' })"
 
-# verify that we have the expected number of documents in the ZTF_alerts_aux collection
-EXPECTED_AUX_ALERTS=27948
+# Verify the freshly-restored ZTF_alerts_aux has the expected document count.
 ACTUAL_AUX_ALERTS=$(mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "db.getSiblingDB('$DB_NAME').ZTF_alerts_aux.countDocuments()")
 if [ "$ACTUAL_AUX_ALERTS" -ne "$EXPECTED_AUX_ALERTS" ]; then
     echo "Expected $EXPECTED_AUX_ALERTS documents in ZTF_alerts_aux collection, but found $ACTUAL_AUX_ALERTS"
     exit 1
 else
-    echo "Successfully loaded ZTF_alerts_aux collection with $ACTUAL_AUX_ALERTS documents"
+    echo "ZTF_alerts_aux ready with $ACTUAL_AUX_ALERTS documents"
 fi
 
 echo "MongoDB initialization script completed successfully"

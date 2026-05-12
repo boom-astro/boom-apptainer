@@ -30,7 +30,11 @@ KAFKA_PORT=$BENCHMARK_KAFKA_PORT
 
 # Paths
 TESTS_DIR="$BOOM_REPO_ROOT/tests"
-PERSISTENCE_DIR="$TESTS_DIR/apptainer/persistent"
+# Kafka and MongoDB issue thousands of small fsyncs during startup, which
+# becomes pathologically slow on NFS-mounted home directories (we observed
+# ~1s per partition log creation on NFS, vs. milliseconds on local disk).
+# Default to a local /tmp path; override with BENCHMARK_PERSISTENCE_DIR.
+PERSISTENCE_DIR="${BENCHMARK_PERSISTENCE_DIR:-/tmp/boom-benchmark-${USER:-$(id -un)}/persistent}"
 CONFIG_FILE="$TESTS_DIR/throughput/config.yaml"
 HEALTHCHECK_DIR="$BOOM_REPO_ROOT/apptainer/scripts/healthcheck"
 BENCHMARK_SIF_DIR="$TESTS_DIR/apptainer/sif"
@@ -39,6 +43,20 @@ BG_PIDS=()
 # Parse args
 KEEP_UP=false
 APPTAINER=false
+# PHASE selects which portion of the script runs.
+#   full     - default; the original end-to-end behavior (start, bench, stop).
+#   setup    - start services, initialize MongoDB (including the
+#              ZTF_alerts_aux_snapshot used for warm resets), pre-create Kafka
+#              topics, start the BOOM apptainer instance, and run the producer.
+#              Leaves all instances running so that subsequent bench phases can
+#              reuse them.
+#   bench    - assume services are already up (from a prior setup phase).
+#              Reset mutable state (drop ZTF alerts collections, restore
+#              ZTF_alerts_aux from the snapshot, recreate output topics, reset
+#              the consumer group offset), then start scheduler+consumer and
+#              wait for completion.
+#   teardown - stop all running benchmark instances and exit.
+PHASE=full
 POSITIONAL_ARGS=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -50,9 +68,17 @@ while [ "$#" -gt 0 ]; do
             APPTAINER=true
             shift
             ;;
+        --phase)
+            PHASE="$2"
+            shift 2
+            ;;
+        --phase=*)
+            PHASE="${1#--phase=}"
+            shift
+            ;;
         --*)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--keep-up] [--apptainer] [logs_dir]"
+            echo "Usage: $0 [--keep-up] [--apptainer] [--phase full|setup|bench|teardown] [logs_dir]"
             exit 1
             ;;
         *)
@@ -62,14 +88,26 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 if [ ${#POSITIONAL_ARGS[@]} -gt 1 ]; then
-    echo "Usage: $0 [--keep-up] [--apptainer] [logs_dir]"
+    echo "Usage: $0 [--keep-up] [--apptainer] [--phase full|setup|bench|teardown] [logs_dir]"
     exit 1
 fi
+case "$PHASE" in
+    full|setup|bench|teardown) ;;
+    *)
+        echo "Invalid --phase value: $PHASE (must be one of: full, setup, bench, teardown)"
+        exit 1
+        ;;
+esac
+if [ "$PHASE" != "full" ] && [ "$APPTAINER" != "true" ]; then
+    echo "Phases other than 'full' are only supported with --apptainer"
+    exit 1
+fi
+
+PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 
 COMPOSE_CONFIG=()
 if [ "$APPTAINER" == "false" ]; then
   COMPOSE_CONFIG=("-f" "$TESTS_DIR/throughput/compose.yaml")
-  PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 
   if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
       echo "BOOM_GPU__ENABLED is true and platform is Linux; adding GPU override to Docker Compose configuration (CUDA support)"
@@ -92,12 +130,35 @@ cleanup() {
         kill "${BG_PIDS[@]}" 2>/dev/null || true
         wait "${BG_PIDS[@]}" 2>/dev/null || true
     fi
-    stop_all_instances
+    # In setup/bench phases the warm-sweep orchestrator owns the service
+    # lifecycle, so we deliberately leave instances running even on error: the
+    # operator can re-run the failing phase against the live services, or
+    # invoke `--phase teardown` explicitly to release them.
+    case "$PHASE" in
+        setup|bench) ;;
+        *) stop_all_instances ;;
+    esac
 }
 
 trap cleanup EXIT INT TERM
 
+STOP_ALL_INSTANCES_DONE=false
 stop_all_instances() {
+  # Idempotent: explicit error/success paths call this directly, and the EXIT
+  # trap also calls it via cleanup() — guard so the shutdown runs only once.
+  if [ "$STOP_ALL_INSTANCES_DONE" = true ]; then
+      return
+  fi
+  STOP_ALL_INSTANCES_DONE=true
+  # In setup/bench phases the warm-sweep orchestrator owns the service
+  # lifecycle: never tear down here, even on error. Teardown is requested
+  # explicitly via --phase teardown.
+  case "$PHASE" in
+      setup|bench)
+          echo -e "$(current_datetime) - ${YELLOW}Phase $PHASE: leaving BOOM services running (teardown is the orchestrator's job)${END}"
+          return
+          ;;
+  esac
   if [ "$KEEP_UP" = true ]; then
       echo -e "$(current_datetime) - ${YELLOW}--keep-up flag is set; leaving BOOM services running${END}"
       return
@@ -108,7 +169,7 @@ stop_all_instances() {
     apptainer instance stop benchmark_kafka || true
     apptainer instance stop benchmark_valkey || true
     apptainer instance stop benchmark_mongo || true
-    rm -rf "$TESTS_DIR/apptainer/persistent/kafka"
+    rm -rf "$PERSISTENCE_DIR/kafka"
   else
     docker compose "${COMPOSE_CONFIG[@]}" down
   fi
@@ -137,7 +198,136 @@ mongo_count() {
     echo "${raw:-0}"
 }
 
+# Periodically sample CPU/RAM for a PID and write JSON lines (apptainer equivalent of docker stats).
+# Runs in background; exits when the target PID disappears.
+collect_stats() {
+    local pid="$1"
+    local service="$2"
+    local logfile="$3"
+    : > "$logfile"
+    while kill -0 "$pid" 2>/dev/null; do
+        local sample
+        sample=$(ps -p "$pid" -o pcpu=,pmem=,rss=,vsz=,nlwp= 2>/dev/null | awk '{$1=$1}1')
+        if [ -n "$sample" ]; then
+            local pcpu pmem rss_kb vsz_kb threads
+            read -r pcpu pmem rss_kb vsz_kb threads <<<"$sample"
+            printf '{"Timestamp":"%s","Service":"%s","PID":%s,"CPUPerc":"%s%%","MemPerc":"%s%%","MemRssKiB":%s,"MemVszKiB":%s,"Threads":%s}\n' \
+                "$(date -u +%FT%TZ)" "$service" "$pid" "$pcpu" "$pmem" "$rss_kb" "$vsz_kb" "$threads" \
+                >> "$logfile"
+        fi
+        sleep 2
+    done
+}
+
+# Kafka topics used by the throughput benchmark.
+#   - ZTF_SOURCE_TOPIC: where the producer writes the input alerts. Preserved
+#     across warm-sweep iterations so the producer only runs once.
+#   - ZTF_OUTPUT_TOPICS: topics that BOOM publishes into. Warm resets
+#     delete+recreate them so each iteration starts at offset 0 and the verify
+#     consumer reads exactly the messages produced by that iteration.
+ZTF_SOURCE_TOPIC="ztf_20250311_programid1"
+ZTF_OUTPUT_TOPICS=(
+    "babamul.ztf.lsst-match.stellar"
+    "babamul.ztf.lsst-match.hosted"
+    "babamul.ztf.lsst-match.hostless"
+    "babamul.ztf.no-lsst-match.stellar"
+    "babamul.ztf.no-lsst-match.hosted"
+    "babamul.ztf.no-lsst-match.hostless"
+    "ZTF_alerts_results"
+)
+ZTF_TOPICS=("${ZTF_OUTPUT_TOPICS[@]}" "$ZTF_SOURCE_TOPIC")
+
+kafka_topics_sh() {
+    apptainer exec instance://benchmark_kafka /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server localhost:"$KAFKA_PORT" "$@"
+}
+
+# Number of partitions that ZTF_OUTPUT_TOPICS are created with. Used to build
+# the delete-records JSON spec.
+ZTF_OUTPUT_PARTITIONS=15
+
+# reset_mutable_state brings the cluster back to a known pre-bench state without
+# repeating the heavy parts of setup (mongorestore, producer, NED import). It
+# is only called in the bench phase, which assumes services are already up.
+#
+# Kafka output topics: instead of delete+recreate (which is async and costs
+# 35-40s per iteration waiting for the broker to finish the deletion), we use
+# kafka-delete-records --offset=-1 to advance each partition's log-start-offset
+# to its current high-water-mark. That makes prior records inaccessible
+# without touching topic metadata, so the call is near-instant.
+#
+# This also implicitly fixes the original verify-consumer offset-leak bug:
+# even if a previous iteration committed a partial offset (e.g. exited early
+# on the 1s silence break), the LSO advance pushes the consumer's effective
+# position past the leftover records, so the next iteration's verify reads
+# exactly this iteration's output.
+reset_mutable_state() {
+    echo "$(current_datetime) - Resetting mutable state for warm bench iteration"
+
+    # MongoDB: drop the collections that BOOM populates during the bench, and
+    # restore ZTF_alerts_aux from its pre-built in-server snapshot (created by
+    # apptainer_mongo-init.sh). The aggregate $out copy runs entirely
+    # server-side, which is ~5-10x faster than re-running mongorestore on the
+    # gzipped archive.
+    run_mongo_query "
+        const target = db.getSiblingDB('boom-benchmarking');
+        target.ZTF_alerts.drop();
+        target.ZTF_alerts_cutouts.drop();
+        target.ZTF_alerts_aux.drop();
+        target.ZTF_alerts_aux_snapshot.aggregate([{ \$out: 'ZTF_alerts_aux' }]);
+        target.ZTF_alerts_aux.createIndex({ 'coordinates.radec_geojson': '2dsphere' });
+    " "true" > /dev/null
+
+    # Kafka: build the delete-records JSON spec (every partition of every
+    # output topic, offset -1 = high-water-mark) and pass it to
+    # kafka-delete-records.sh inside the broker container.
+    #
+    # We write the JSON to host /tmp (no --bind) because apptainer auto-mounts
+    # the host's /tmp into the container at the same path, so the broker can
+    # read it directly. Trying to --bind something at /tmp/X is silently
+    # shadowed by that auto-mount.
+    local json_path
+    json_path=$(mktemp /tmp/boom-delete-records.XXXXXX.json)
+    {
+        printf '{"partitions":['
+        local first=true
+        for topic in "${ZTF_OUTPUT_TOPICS[@]}"; do
+            for p in $(seq 0 $((ZTF_OUTPUT_PARTITIONS - 1))); do
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    printf ','
+                fi
+                printf '{"topic":"%s","partition":%d,"offset":-1}' "$topic" "$p"
+            done
+        done
+        printf '],"version":1}\n'
+    } > "$json_path"
+
+    apptainer exec instance://benchmark_kafka \
+        /opt/kafka/bin/kafka-delete-records.sh \
+        --bootstrap-server localhost:"$KAFKA_PORT" \
+        --offset-json-file "$json_path" > /dev/null
+    rm -f "$json_path"
+
+    echo "$(current_datetime) - Mutable state reset"
+}
+
+# Teardown phase short-circuits: stop everything and exit before any of the
+# startup / bench logic runs.
+if [ "$PHASE" = "teardown" ]; then
+    echo "$(current_datetime) - Phase teardown: stopping all benchmark services"
+    PHASE=full  # let stop_all_instances actually run instead of being a no-op
+    stop_all_instances
+    exit 0
+fi
+
 if [ "$APPTAINER" == "true" ]; then
+
+  # The startup block below (MongoDB through producer) only runs in phases
+  # that need to provision the cluster. The bench phase skips it entirely
+  # under the assumption that a prior setup phase left the services running.
+  if [ "$PHASE" = "full" ] || [ "$PHASE" = "setup" ]; then
 
   # -----------------------------
   # Start MongoDB
@@ -174,6 +364,10 @@ if [ "$APPTAINER" == "true" ]; then
   # Start Kafka
   # -----------------------------
   echo && echo "$(current_datetime) - Starting Kafka"
+  # Defensive: a previous run killed before cleanup may have left Kafka data
+  # behind. Loading stale partitions on startup races with the harness's
+  # pre-creation step.
+  rm -rf "$PERSISTENCE_DIR/kafka"
   mkdir -p "$LOGS_DIR/kafka" "$PERSISTENCE_DIR/kafka"
   apptainer instance run \
       --bind "$PERSISTENCE_DIR/kafka:/var/lib/kafka/data" \
@@ -181,6 +375,18 @@ if [ "$APPTAINER" == "true" ]; then
       --bind "$LOGS_DIR/kafka:/opt/kafka/logs" \
       "$BENCHMARK_SIF_DIR/kafka.sif" benchmark_kafka
   "$HEALTHCHECK_DIR/kafka-healthcheck.sh" --port "$KAFKA_PORT" --instance benchmark_kafka
+
+  # -----------------------------
+  # Pre-create  topics so the scheduler does not pay the topic-creation
+  # warmup cost when the first enriched alerts arrive. ZTF_TOPICS is defined
+  # at the top of the script so that reset_mutable_state can reuse it.
+  # -----------------------------
+  echo && echo "$(current_datetime) - Pre-creating Kafka topics"
+  for topic in "${ZTF_TOPICS[@]}"; do
+    kafka_topics_sh --create --topic "$topic" \
+      --partitions 15 --replication-factor 1 --if-not-exists > /dev/null
+  done
+  echo "$(current_datetime) - Kafka topics created: ${ZTF_TOPICS[*]}"
 
   # -----------------------------
   # Start Boom
@@ -209,24 +415,92 @@ if [ "$APPTAINER" == "true" ]; then
     > "$LOGS_DIR/producer.log" 2>&1
   echo -e "${GREEN}$(current_datetime) - Producer finished sending alerts${END}"
 
-  # -----------------------------
-  # Start Consumer
-  # -----------------------------
-  echo && echo "$(current_datetime) - Starting Consumer"
-  apptainer exec --pwd /app \
-    instance://benchmark_boom /app/kafka_consumer ztf 20250311 --programids public \
-    > "$LOGS_DIR/consumer.log" 2>&1 &
-  BG_PIDS+=($!)
-  echo -e "${GREEN}Boom consumer started for survey ztf${END}"
+  fi  # end of "PHASE in (full, setup)" startup block
+
+  if [ "$PHASE" = "setup" ]; then
+      echo -e "$(current_datetime) - ${GREEN}Setup phase complete; services left running for warm bench iterations${END}"
+      # The EXIT trap's cleanup() is phase-aware and will not stop instances
+      # in setup phase, so exiting here leaves the cluster warm.
+      exit 0
+  fi
+
+  if [ "$PHASE" = "bench" ]; then
+      # Bring the cluster back to a known pre-bench state. Then truncate the
+      # scheduler / consumer logs so that the GPU-warmup and
+      # ingestion/classification/filter checks below operate on a fresh log
+      # for this iteration (the previous iteration may have written the same
+      # "all GPU model sets loaded successfully" / "passed filter" lines).
+      reset_mutable_state
+      mkdir -p "$LOGS_DIR"
+      : > "$LOGS_DIR/scheduler.log"
+      : > "$LOGS_DIR/consumer.log"
+  fi
 
   # -----------------------------
-  # Start Scheduler
+  # Start Scheduler — before the Consumer so that the (potentially slow) GPU
+  # warmup happens while Redis is still empty. We then wait for GPU readiness
+  # and only after that bring up the Consumer, so the first Kafka message
+  # arrives into an already-warm pipeline. This keeps `t1_b` (= "Consumer
+  # received first message" timestamp in run.py) from including warmup time.
   # -----------------------------
   echo && echo "$(current_datetime) - Starting Scheduler"
   apptainer exec --pwd /app instance://benchmark_boom /app/scheduler ztf \
     > "$LOGS_DIR/scheduler.log" 2>&1 &
+  SCHEDULER_PID=$!
+  BG_PIDS+=($SCHEDULER_PID)
+  collect_stats "$SCHEDULER_PID" scheduler "$LOGS_DIR/scheduler.stats.log" &
   BG_PIDS+=($!)
   echo -e "${GREEN}Boom scheduler started for survey ztf${END}"
+
+  # -----------------------------
+  # Wait for GPU readiness (apptainer + GPU only) before the Consumer starts.
+  # -----------------------------
+  if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
+      echo "$(current_datetime) - GPU support is enabled; waiting for GPUs to be inference-ready before starting Consumer"
+      WARMUP_START=$(date +%s)
+      while ! grep -q "all GPU model sets loaded successfully" "$LOGS_DIR/scheduler.log" 2>/dev/null; do
+          ELAPSED=$(( $(date +%s) - WARMUP_START ))
+          if [ $ELAPSED -ge ${TIMEOUT_SECS:-300} ]; then
+              echo -e "$(current_datetime) - ${RED}Timeout reached while waiting for GPU inference to be validated${END}"
+              stop_all_instances
+              exit 1
+          fi
+          sleep 1
+      done
+      WARMUP_TIME=$(( $(date +%s) - WARMUP_START ))
+      echo "$(current_datetime) - ONNX CUDA warmup completed in $WARMUP_TIME seconds (before Consumer start)"
+  fi
+
+  # -----------------------------
+  # Start Consumers (parallel)
+  # -----------------------------
+  # The ZTF source topic has 15 partitions. Kafka transparently distributes
+  # them across all consumers sharing the same group_id, so spawning N
+  # parallel kafka_consumer processes splits the work N ways without any
+  # coordination on our side. N_KAFKA_CONSUMERS=3 was tuned to saturate the
+  # downstream alert workers without over-subscribing the broker; raise it if
+  # you push more alert workers.
+  N_KAFKA_CONSUMERS="${N_KAFKA_CONSUMERS:-2}"
+  echo && echo "$(current_datetime) - Starting $N_KAFKA_CONSUMERS Consumer(s)"
+  for i in $(seq 1 "$N_KAFKA_CONSUMERS"); do
+    consumer_log="$LOGS_DIR/consumer.log"
+    if [ "$N_KAFKA_CONSUMERS" -gt 1 ] && [ "$i" -gt 1 ]; then
+        consumer_log="$LOGS_DIR/consumer-$i.log"
+    fi
+    apptainer exec --pwd /app \
+      instance://benchmark_boom /app/kafka_consumer ztf 20250311 --programids public \
+      > "$consumer_log" 2>&1 &
+    pid=$!
+    BG_PIDS+=($pid)
+    # Only sample stats from the first consumer; that's enough to characterize
+    # behavior and avoids spamming /proc with $N_KAFKA_CONSUMERS samplers.
+    if [ "$i" -eq 1 ]; then
+        CONSUMER_PID=$pid
+        collect_stats "$CONSUMER_PID" consumer "$LOGS_DIR/consumer.stats.log" &
+        BG_PIDS+=($!)
+    fi
+  done
+  echo -e "${GREEN}$N_KAFKA_CONSUMERS Boom consumer(s) started for survey ztf${END}"
 
 else
   # Remove any existing containers
@@ -267,7 +541,7 @@ echo && echo "$(current_datetime) - Waiting for Kafka consumer to start"
 START_TIME=$(date +%s)
 while true; do
     if [ "$APPTAINER" == "true" ]; then
-        grep -q "Consumer received first message, continuing..." "$LOGS_DIR/consumer.log" && break
+        grep -q "Consumer received first message, continuing..." "$LOGS_DIR/consumer.log" 2>/dev/null && break
     else
         docker compose "${COMPOSE_CONFIG[@]}" logs consumer | grep -q "Consumer received first message, continuing..." && break
         MONGO_INIT_CONTAINER_ID=$(docker compose "${COMPOSE_CONFIG[@]}" ps -aq mongo-init | tail -n 1)
@@ -301,25 +575,13 @@ if [ "${LOW_STORAGE:-}" = "true" ]; then
     rm -rf ./data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz || true
 fi
 
-# If GPU support is enabled, we wait until we have confirmed that GPU inference is working.
-# On some architectures (recent GPUs, mostly) we may have to wait for CUDA to compile
-# some kernels and populate the cache before we see successful GPU inference,
-# so we wait until we see logs indicating that the ONNX CUDA warmup has completed.
-if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
+# If GPU support is enabled in docker mode, wait here for inference readiness.
+# Apptainer mode already waited for GPU readiness before starting the Consumer
+# (see the early GPU-ready block above), so this redundant wait is skipped.
+if [ "$APPTAINER" == "false" ] && [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
     echo "$(current_datetime) - GPU support is enabled; waiting for GPUs to be inference-ready"
     START_TIME=$(date +%s)
-
-    if [ "$APPTAINER" == "true" ]; then
-      check_gpu_ready() {
-        grep -q "Confirmed GPU runtime preconditions, free VRAM guardrail, and GPU inference" "$LOGS_DIR/scheduler.log"
-      }
-    else
-      check_gpu_ready() {
-        docker compose "${COMPOSE_CONFIG[@]}" logs scheduler | grep -q "Confirmed GPU runtime preconditions, free VRAM guardrail, and GPU inference"
-      }
-    fi
-
-    while ! check_gpu_ready; do
+    while ! docker compose "${COMPOSE_CONFIG[@]}" logs scheduler | grep -q "all GPU model sets loaded successfully"; do
         CURRENT_TIME=$(date +%s)
         ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
         if [ $ELAPSED_TIME -ge $TIMEOUT_SECS ]; then
@@ -462,6 +724,22 @@ if [ "$APPTAINER" == "false" ]; then
 fi
 
 echo -e "$(current_datetime) - ${GREEN}All tasks completed${END}"
+
+if [ "$PHASE" = "bench" ]; then
+    # Bench phase keeps mongo/valkey/kafka alive for the next iteration, but the
+    # scheduler/consumer started in this iteration must die before we return —
+    # otherwise the next iteration's apptainer exec would race against this
+    # one. The EXIT trap also runs cleanup(), which is a no-op against an
+    # already-drained BG_PIDS list.
+    echo "$(current_datetime) - Bench iteration complete; stopping scheduler/consumer and leaving services up"
+    if [ ${#BG_PIDS[@]} -gt 0 ]; then
+        kill "${BG_PIDS[@]}" 2>/dev/null || true
+        wait "${BG_PIDS[@]}" 2>/dev/null || true
+        BG_PIDS=()
+    fi
+    exit 0
+fi
+
 echo && stop_all_instances
 
 exit 0
