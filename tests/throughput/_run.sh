@@ -667,6 +667,8 @@ if [ "$APPTAINER" == "true" ]; then
 else
   python "$TESTS_DIR/throughput/read-kafka-output.py"
 fi
+# TODO: check for uv implementation
+# uv run "$TESTS_DIR/throughput/read-kafka-output.py"
 
 # -----------------------------
 # Export MongoDB collection stats to JSON for analysis
