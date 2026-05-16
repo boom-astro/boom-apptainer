@@ -474,13 +474,7 @@ if [ "$APPTAINER" == "true" ]; then
   # -----------------------------
   # Start Consumers (parallel)
   # -----------------------------
-  # The ZTF source topic has 15 partitions. Kafka transparently distributes
-  # them across all consumers sharing the same group_id, so spawning N
-  # parallel kafka_consumer processes splits the work N ways without any
-  # coordination on our side. N_KAFKA_CONSUMERS=3 was tuned to saturate the
-  # downstream alert workers without over-subscribing the broker; raise it if
-  # you push more alert workers.
-  N_KAFKA_CONSUMERS="${N_KAFKA_CONSUMERS:-2}"
+  N_KAFKA_CONSUMERS="${N_KAFKA_CONSUMERS:-1}"
   echo && echo "$(current_datetime) - Starting $N_KAFKA_CONSUMERS Consumer(s)"
   for i in $(seq 1 "$N_KAFKA_CONSUMERS"); do
     consumer_log="$LOGS_DIR/consumer.log"
