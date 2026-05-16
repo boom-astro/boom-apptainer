@@ -217,7 +217,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
   # Only ZTF actually uses the GPU; LSST/DECam always run on CPU.
   BOOM_SIF="boom.sif"
   NV_FLAG=""
-  if [ "$2" != "consumer" ] && [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$survey" = "ztf" ]; then
+  if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$survey" = "ztf" ]; then
     echo -e "${YELLOW}$(current_datetime) - BOOM_GPU__ENABLED is true and survey is ztf; using BOOM GPU image with --nv flag for GPU support${END}"
     BOOM_SIF="boom-gpu.sif"
     NV_FLAG="--nv"
