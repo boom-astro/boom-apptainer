@@ -20,7 +20,7 @@ use opentelemetry::{
 };
 use redis::AsyncCommands;
 use tokio::sync::mpsc;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 // NOTE: Global instruments are defined here because reusing instruments is
@@ -209,6 +209,7 @@ pub async fn run_enrichment_worker<T: EnrichmentWorker>(
         KeyValue::new("status", "error"),
         KeyValue::new("reason", "output_queue"),
     ];
+    info!("enrichment worker ready");
     loop {
         if command_check_countdown == 0 {
             if should_terminate(&mut receiver) {
