@@ -110,7 +110,8 @@ if args.cutouts_storage_type == "s3":
     config["cutouts_storage"]["cache"]["ttl_seconds"] = args.cache_ttl_seconds
     config["cutouts_storage"]["cache"]["max_memory"] = args.cache_max_memory
 elif args.cutouts_storage_type == "mongo":
-    config["cutouts_storage"]["host"] = "mongo"
+    config["cutouts_storage"]["host"] = hosts["mongo"]
+    config["cutouts_storage"]["port"] = ports["mongo"]
     config["cutouts_storage"]["name"] = "boom-benchmarking"
     config["cutouts_storage"]["username"] = "mongoadmin"
     config["cutouts_storage"]["password"] = "mongoadminsecret"
