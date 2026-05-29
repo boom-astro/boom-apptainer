@@ -258,8 +258,9 @@ with open(f"{logs_dir}/scheduler.log") as f:
     line = lines[-3]
     t2_b = extract_date_from_log(line, use_apptainer)
 
+expected_alerts=29142.0
 wall_time_s = (t2_b - t1_b).total_seconds()
-print(f"BOOM throughput test wall time: {wall_time_s:.1f} seconds")
+print(f"BOOM throughput test wall time: {wall_time_s:.1f} seconds - {expected_alerts / wall_time_s:.1f} alerts/s")
 
 # Save the wall time to a file
 os.makedirs(logs_dir, exist_ok=True)

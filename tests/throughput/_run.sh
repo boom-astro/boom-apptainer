@@ -408,7 +408,6 @@ if [ "$APPTAINER" == "true" ]; then
     NV_FLAG="--nv"
   fi
   apptainer instance start $NV_FLAG \
-    --env RUST_LOG=debug,ort=error \
     --bind "$CONFIG_FILE:/app/config.yaml" \
     --bind "$BOOM_REPO_ROOT/data/alerts:/app/data/alerts" \
     "$TESTS_DIR/apptainer/sif/$BOOM_SIF" benchmark_boom
@@ -476,11 +475,13 @@ if [ "$APPTAINER" == "true" ]; then
           sleep 1
       done
       WARMUP_TIME=$(( $(date +%s) - WARMUP_START ))
-      echo "$(current_datetime) - ONNX CUDA warmup completed in $WARMUP_TIME seconds (before Consumer start)"
+      echo "$(current_datetime) - ONNX CUDA warmup completed in $WARMUP_TIME seconds"
   fi
 
+  sleep 1
+
   # -----------------------------
-  # Start Consumers (parallel)
+  # Start Consumers
   # -----------------------------
   N_KAFKA_CONSUMERS="${N_KAFKA_CONSUMERS:-1}"
   echo && echo "$(current_datetime) - Starting $N_KAFKA_CONSUMERS Consumer(s)"
