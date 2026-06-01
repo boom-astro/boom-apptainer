@@ -202,23 +202,21 @@ fi
 # Run benchmark
 # -----------------------------
 if [ "$1" == "benchmark" ]; then
+  shift # drop "benchmark"
+
   # If "init" is passed, install the required Python packages
   if [ "$2" == "init" ]; then
     pip install pandas pyyaml astropy confluent-kafka
-  fi
-
-  # If "init" or "build" is passed, build the SIF files needed for the benchmark
-  if [ "$2" == "init" ] || [ "$2" == "build" ]; then
-    "$0" build benchmark
+    shift # drop "init"
   fi
 
   # Check if "gpu" is passed as an argument to enable GPU benchmark mode
-  if [ "$2" == "gpu" ] || [ "$3" == "gpu" ]; then
-    # Capture GPU device IDs from the arg right after "gpu" (optional, comma-separated, e.g. 0,1,2,3)
-    if [ "$2" == "gpu" ]; then
-      gpu_ids="$3"
-    elif [ "$3" == "gpu" ]; then
-      gpu_ids="$4"
+  if [ "$1" == "gpu" ]; then
+    shift # drop "gpu"
+    gpu_ids=""
+    if [[ "$1" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+      gpu_ids="$1"
+      shift # drop gpu IDs
     fi
     echo -e "${YELLOW}GPU benchmark mode enabled. Setting BOOM_GPU__ENABLED to true.${END}"
     export BOOM_GPU__ENABLED=true
@@ -231,13 +229,8 @@ if [ "$1" == "benchmark" ]; then
     export BOOM_GPU__ENABLED=false
   fi
 
-  # Run the benchmark
-  if [ "$2" == "keep-up" ] || [ "$3" == "keep-up" ]; then
-    echo -e "${YELLOW}Keeping services up after benchmark completion.${END}"
-    python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer --keep-up
-  else
-    python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer
-  fi
+  # Forward every remaining arg as-is to run.py
+  python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer "$@"
   exit 0
 fi
 
