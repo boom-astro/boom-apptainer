@@ -32,8 +32,9 @@ BOOM runs on macOS and Linux. You'll need:
 - `Docker` and `docker compose`: used to run the database, cache/task queue, and `Kafka`;
 - `Rust` (a systems programming language) `>= 1.55.0`;
 - `tar`: used to extract archived alerts for testing purposes.
+- `git-lfs`: required to pull the large files (e.g. ML models) tracked via Git LFS.
 - `libssl`, `libsasl2`: required for some Rust crates that depend on native libraries for secure connections and authentication.
-- On Linux, you **need** to set `ORT_DYLIB_PATH` to a local ONNX Runtime shared library before running BOOM (for both CPU-only and GPU builds). See the [Linux ONNX Runtime setup](#linux-onnx-runtime-setup) section below for details.
+- On Linux, you **need** to set `ORT_DYLIB_PATH` to a local ONNX Runtime shared library before running BOOM (for both CPU-only and GPU builds). See the [Linux ONNX runtime setup](#onnx-runtime-setup) section below for details.
 
 *Boom can also be run with `Apptainer` instead of `Docker` for Linux systems.
 This is especially useful for running BOOM on HPC systems where Docker is not available.*
@@ -62,7 +63,7 @@ This is especially useful for running BOOM on HPC systems where Docker is not av
   sudo apt install build-essential pkg-config libssl-dev libsasl2-dev -y
   ```
 
-- If you want to use GPU hardware acceleration for enrichment, you need to have the appropriate NVIDIA drivers installed, along with CUDA and cuDNN. See the [GPU inference](#gpu-inference-linux) subsection below for more details.
+- If you want to use GPU hardware acceleration for enrichment, you need to have the appropriate NVIDIA drivers installed, along with CUDA and cuDNN. See the [Linux GPU inference](#gpu-inference) subsection below for more details.
 
 ## Setup
 
@@ -77,8 +78,7 @@ by copying it to `.env`:
 cp .env.example .env
 ```
 
-**Note:** Do not commit `.env` to Git or use the example values
-in production.
+**Note:** Do not commit `.env` to Git or use the example values in production.
 
 #### Email configuration (for notifications)
 
@@ -227,7 +227,7 @@ docker compose -f docker-compose.yaml -f docker-compose.cutouts-s3-external.yaml
 
 ### Linux only
 
-#### ONNX runtime setup {#linux-onnx-runtime-setup}
+#### ONNX runtime setup
 
 On Linux, BOOM links to the ONNX Runtime shared library at process start via `ORT_DYLIB_PATH`. This is required regardless of whether you use GPU inference or not. You must set this variable before running any BOOM binary natively.
 
@@ -250,7 +250,7 @@ ls .venv/lib/python3.13/site-packages/onnxruntime/capi/libonnxruntime.so.*
 
 You must export `ORT_DYLIB_PATH` in each shell where you run BOOM natively on Linux, or add it once to your shell's configuration file (e.g., `.bashrc` or `.zshrc`) and source it.
 
-#### GPU inference {#gpu-inference-linux}
+#### GPU inference
 
 For GPU inference on Linux you need, in addition to the above:
 
@@ -290,14 +290,14 @@ See [docs/gpu.md](docs/gpu.md) for container-vs-native details, troubleshooting,
     ```
 2. Bring up the local dev stack:
 
-   - With docker, using the provided `docker-compose.yaml` and `docker-compose.override.yaml` file:
-      ```bash
+   - With docker, using the provided `docker-compose.yaml` and `docker-compose.override.yaml` files:
+     ```bash
      make dev
      ```
      This brings up the hot-reloading `api`, `consumer-ztf`, and `scheduler-ztf` with `cargo watch`, plus
      the supporting Docker services they need.
      This may take a couple of minutes the first time you run it, as it needs to download the docker image for each service.
-     *To check if the containers are running and healthy, run `docker ps`.*
+     To check if the containers are running and healthy, run `docker ps`.
 
      **Note:** Docker Compose will automatically use the environment variables from your `.env` file to configure the MongoDB container with your specified credentials.
 
@@ -323,12 +323,12 @@ See [docs/gpu.md](docs/gpu.md) for container-vs-native details, troubleshooting,
        cargo watch -w src -x 'run --bin scheduler -- ztf'
        ```
 
-3. Produce alerts for testing:
+3. Delete existing ZTF Kafka topics and produce alerts for testing:
 
     ```bash
     make delete-produce-ztf
     ```
-   If you change the producer date or program, make sure the consumer is reading the same topic date/program combination.
+   _If you change the producer date or program, make sure the consumer is reading the same topic date/program combination._
 
 ### Alert Production (not required for production use)
 
@@ -397,22 +397,37 @@ cargo run --release --bin scheduler ztf
 ## Running BOOM in production
 
 ### Using Docker
-To run the consumer and the scheduler with Docker, you can open a shell in the `boom` container with:
+
+In production, BOOM runs the default services alongside a set of dedicated services defined in `docker-compose.yaml` under the `prod` profile: `api`, `consumer-ztf`, `consumer-lsst`, `scheduler-ztf`, and `scheduler-lsst`. Each of these services starts its binary automatically at container startup.
+
+Bring up the full prod stack with:
+
 ```bash
-docker exec -it -w /app boom /bin/bash
+docker compose --profile prod up -d
 ```
-Then you can run the binaries with:
+
+Or start individual services:
+
 ```bash
-./kafka_consumer <SURVEY> [DATE] --programids [PROGRAMIDS]
-./scheduler <SURVEY> [CONFIG_PATH]
+docker compose --profile prod up -d consumer-ztf scheduler-ztf
 ```
-Or you can run them directly with:
+
+To run a one-shot operational task, override the service's command with `docker compose run`. This is typically used for database migrations such as `migrate_fp_flux` and `migrate_snr`:
+
 ```bash
-docker exec -it -w /app boom ./kafka_consumer <SURVEY> [DATE] --programids [PROGRAMIDS]
-docker exec -it -w /app boom ./scheduler <SURVEY> [CONFIG_PATH]
+docker compose --profile prod run --rm scheduler-ztf /app/migrate_fp_flux
+docker compose --profile prod run --rm scheduler-ztf /app/migrate_snr
+```
+
+To tail logs or open a shell in a running container:
+
+```bash
+docker compose logs -f scheduler-ztf
+docker compose exec scheduler-ztf /bin/bash
 ```
 
 ### Using Apptainer
+
 To run the consumer and the scheduler with Apptainer, you can open a shell in the `boom` instance with:
 ```bash
 apptainer shell --pwd /app instance://boom
@@ -482,33 +497,35 @@ RUST_LOG=debug,ort=warn BOOM_SPAN_EVENTS=new,close cargo run --bin scheduler -- 
 ## Running Benchmark
 
 This repository includes a benchmark to test the system and get an idea of the time it takes to process a certain number of alerts.
-This benchmark uses Docker to build the image and run the benchmark, but it can also be run with Apptainer.
-The step to run the benchmark are as follows:
-
-### Build Image
-For Docker (docker Image):
-```bash
-  docker buildx create --use
-  docker buildx inspect --bootstrap
-  docker buildx bake -f tests/throughput/compose.yaml --load
-```
-For Apptainer (SIF file):
-```bash
-  ./apptainer.sh build benchmark
-```
+This benchmark uses Docker to build the image and run the benchmark.
+The steps to run the benchmark are as follows:
 
 ### Download Data
-```bash
-  mkdir -p ./data/alerts
-  mkdir -p ./tests/data/alerts/ztf/public/20250311
-  wget -q https://caltech.box.com/shared/static/qdois5qq2lmvp02ri50fum80vzr54505.gz -O ./data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz
-  gdown "https://drive.google.com/uc?id=1BG46oLMbONXhIqiPrepSnhKim1xfiVbB" -O ./data/alerts/kowalski.NED.json.gz
+
+Download the ZTF alerts auxiliary data dump
+
+```
+mkdir -p ./data/alerts
+```
+
+**For Linux:**
+```
+wget -q https://caltech.box.com/shared/static/qdois5qq2lmvp02ri50fum80vzr54505.gz -O ./data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz
+```
+**For macOS:**
+```
+curl -sL https://caltech.box.com/shared/static/qdois5qq2lmvp02ri50fum80vzr54505.gz -o ./data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz
+```
+
+Download the NED catalog for crossmatching.
+```
+uvx gdown "https://drive.google.com/uc?id=1BG46oLMbONXhIqiPrepSnhKim1xfiVbB" -O ./data/alerts/kowalski.NED.json.gz
 ```
 
 ### Start Benchmark
 Using Docker:
 ```bash
-  uv run tests/throughput/run.py
+uv run tests/throughput/run.py
 ```
 
 Using Apptainer:
