@@ -14,6 +14,7 @@
 #      - valkey      : starts the Valkey instance
 #      - prometheus  : starts the Prometheus instance
 #      - otel        : starts OpenTelemetry Collector process
+#      - tempo       : starts the Grafana Tempo instance
 #      - listener    : starts Boom healthcheck listener process
 #      - kuma        : starts the Kuma instance
 #
@@ -55,9 +56,9 @@ start_service() {
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
   && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
-  && [ "$2" != "otel" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
+  && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | tempo | listener | kuma | all${END}"
   exit 1
 fi
 
@@ -176,6 +177,29 @@ if start_service "prometheus" "$2"; then
 fi
 
 # -----------------------------
+# Grafana Tempo
+# -----------------------------
+if start_service "tempo" "$2"; then
+  if "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo > /dev/null 2>&1; then
+    echo && echo -e "${YELLOW}$(current_datetime) - Tempo is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting Tempo"
+    mkdir -p "$PERSISTENT_DIR/tempo"
+    mkdir -p "$LOGS_DIR/tempo"
+    # Tempo inherits the host OTEL_EXPORTER_OTLP_ENDPOINT, so disable its self-export.
+    apptainer exec \
+      --env OTEL_TRACES_EXPORTER=none \
+      --bind "$BOOM_DIR/config/apptainer-tempo-config.yaml:/etc/tempo/config.yaml" \
+      --bind "$PERSISTENT_DIR/tempo:/var/tempo" \
+      --bind "$LOGS_DIR/tempo:/var/log/tempo" \
+      "$SIF_DIR/tempo.sif" /tempo -config.file=/etc/tempo/config.yaml \
+      > "$LOGS_DIR/tempo/tempo.log" 2>&1 &
+    sleep 1
+    "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
+  fi
+fi
+
+# -----------------------------
 # OpenTelemetry Collector
 # -----------------------------
 if start_service "otel" "$2"; then
@@ -238,7 +262,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
   elif [ -z "$survey" ]; then
     echo && echo -e "${RED}$(current_datetime) - Survey name not provided, consumer or scheduler cannot be started.${END}"
     echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
-    echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | otel | listener | kuma | all${END}"
+    echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | otel | tempo | listener | kuma | all${END}"
     echo -e "  ${YELLOW}The following arguments are only required if starting <all|boom|consumer|scheduler>${END}:"
     echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam${END}"
     echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional for lsst)${END}"

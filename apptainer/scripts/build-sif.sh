@@ -17,6 +17,7 @@
 #     - "boom-gpu"     : builds BOOM GPU variant explicitly
 #     - "prometheus"   : builds Prometheus service
 #     - "otel"         : builds OpenTelemetry Collector service
+#     - "tempo"        : builds Grafana Tempo service
 #     - "kuma"         : builds Uptime Kuma service
 
 YELLOW="\e[33m"
@@ -94,6 +95,10 @@ fi
 
 if start_service "otel" "$1"; then
   apptainer build --force apptainer/sif/otel.sif "docker://otel/opentelemetry-collector:0.131.1"
+fi
+
+if start_service "tempo" "$1"; then
+  apptainer build --force apptainer/sif/tempo.sif "docker://grafana/tempo:2.8.4"
 fi
 
 for service in mongo kafka valkey api prometheus kuma; do
