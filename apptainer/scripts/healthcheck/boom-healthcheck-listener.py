@@ -38,7 +38,14 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.respond(200 if status else 503,
                          f"Otel collector {'is healthy' if status else 'unhealthy'}\n")
         else:
-            self.respond(404, "unknown endpoint")
+            process = self.path.lstrip("/")
+            if not process:
+                self.respond(404, "no process specified\n")
+                return
+
+            status = check_process(process)
+            self.respond(200 if status else 503,
+                         f"{process} {'is healthy' if status else 'unhealthy'}\n")
 
     def respond(self, code, message):
         self.send_response(code)
