@@ -49,10 +49,12 @@ From: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
     rm -rf /opt/ort-py
 
     # Install Kafka CLI tools
-    curl -fsSL https://dlcdn.apache.org/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz -o /tmp/kafka.tgz && \
+    # archive.apache.org keeps every release permanently, unlike dlcdn.apache.org
+    # which only serves the latest patch of each minor version.
+    { curl -fsSL https://archive.apache.org/dist/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz -o /tmp/kafka.tgz && \
     tar -xzf /tmp/kafka.tgz -C /opt && \
     ln -s /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
-    rm -f /tmp/kafka.tgz
+    rm -f /tmp/kafka.tgz ; } || exit 1
 
     cd /app || exit 1
     cargo build --release
