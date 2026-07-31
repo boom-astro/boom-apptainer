@@ -52,6 +52,22 @@ stop_service() {
     return 1
 }
 
+colorize_log() {
+    awk '
+    {
+        for (i = 1; i <= NF; i++) {
+            if      ($i == "ERROR") $i = "\033[31m" $i "\033[0m"
+            else if ($i == "WARN")  $i = "\033[33m" $i "\033[0m"
+            else if ($i == "INFO")  $i = "\033[32m" $i "\033[0m"
+            else if ($i == "DEBUG") $i = "\033[36m" $i "\033[0m"
+            else if ($i == "TRACE") $i = "\033[35m" $i "\033[0m"
+            else if ($i ~ /^[0-9]+-[0-9]+-[0-9]+T/) $i = "\033[90m" $i "\033[0m"
+        }
+        print
+        fflush()
+    }'
+}
+
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
   && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
@@ -298,9 +314,9 @@ if [ "$1" == "log" ]; then
 
   echo -e "${BLUE}Displaying $survey scheduler ${error_log:+ERROR and WARN }log...${END}"
   if [ -n "$error_log" ]; then
-    grep -E "ERROR|WARN" "$log_file"
+    grep -E "ERROR|WARN" "$log_file" | colorize_log
   else
-    tail -f "$log_file"
+    tail -f "$log_file" | colorize_log
   fi
 
   exit 0
@@ -314,7 +330,7 @@ if [ "$1" == "error" ]; then
      log_file="$LOGS_DIR/${survey}_scheduler.log"
      if [ -f "$log_file" ]; then
        echo -e "${BLUE}Displaying $survey scheduler ERROR and WARN log...${END}"
-       grep -E "ERROR|WARN" "$log_file"
+       grep -E "ERROR|WARN" "$log_file" | colorize_log
      else
        echo -e "${YELLOW}WARNING${END}: Log file for $survey scheduler not found at $log_file"
      fi
