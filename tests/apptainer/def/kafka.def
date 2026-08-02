@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: apache/kafka:4.1.1
+From: apache/kafka:4.3.1
 
 %environment
     export PATH=/opt/kafka/bin:$PATH
