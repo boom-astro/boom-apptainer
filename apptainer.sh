@@ -90,7 +90,7 @@ fi
 if [ "$1" == "start" ]; then
   ARGS=("$BOOM_DIR")
   # Check if $2 is a survey name
-  if [ -z "$2" ] || [ "$2" = "lsst" ] || [ "$2" = "ztf" ] || [ "$2" = "decam" ]; then
+  if [ -z "$2" ] || [ "$2" = "lsst" ] || [ "$2" = "ztf" ] || [ "$2" = "decam" ] || [ "$2" = "winter" ]; then
     ARGS+=("all") # service to start
   else
     [ -n "$2" ] && ARGS+=("$2") # service to start
@@ -159,6 +159,9 @@ if [ "$1" == "stop" ]; then
     fi
     if apptainer instance list | grep -q "boom_decam"; then
       apptainer instance stop "boom_decam"
+    fi
+    if apptainer instance list | grep -q "boom_winter"; then
+      apptainer instance stop "boom_winter"
     fi
   elif stop_service "consumer" "$target"; then
     match_mode="partial"
@@ -308,9 +311,9 @@ if [ "$1" == "log" ]; then
     error_log="error"
   fi
 
-  if { [ "$survey" != "lsst" ] && [ "$survey" != "ztf" ] && [ "$survey" != "decam" ]; } || { [ -n "$error_log" ] && [ "$error_log" != "error" ]; }; then
+  if { [ "$survey" != "lsst" ] && [ "$survey" != "ztf" ] && [ "$survey" != "decam" ] && [ "$survey" != "winter" ]; } || { [ -n "$error_log" ] && [ "$error_log" != "error" ]; }; then
     echo -e "${RED}Error: Invalid survey name '$survey'.${END}"
-    echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam${END} ${YELLOW}(optional, defaults to lsst)${END}"
+    echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam | winter${END} ${YELLOW}(optional, defaults to lsst)${END}"
     echo -e "  ${BLUE}<error_log>:${END} ${GREEN}error${END} ${YELLOW}(optional, if provided, will grep for ERROR|WARN in the logs)${END}"
     exit 1
   fi
