@@ -112,10 +112,11 @@ if [ "$1" == "stop" ]; then
   target="$2"
   if [ -n "$target" ] && [ "$target" != "all" ] && [[ "$target" != boom* ]] && [ "$target" != "consumer" ] && [ "$target" != "scheduler" ] \
     && [ "$target" != "api" ] && [ "$target" != "dev" ] && [ "$target" != "mongo" ] && [ "$target" != "kafka" ] && [ "$target" != "valkey" ] \
-    && [ "$target" != "prometheus" ] && [ "$target" != "otel" ] && [ "$target" != "tempo" ] && [ "$target" != "listener" ] && [ "$target" != "kuma" ]; then
+    && [ "$target" != "prometheus" ] && [ "$target" != "grafana" ] && [ "$target" != "otel" ] && [ "$target" != "tempo" ] \
+    && [ "$target" != "listener" ] && [ "$target" != "kuma" ]; then
     echo -e "${RED}Error: Invalid service name '$target'.${END}"
     echo -e "Usage: ${BLUE}$0 stop [service|all|'empty']${END} ${YELLOW}('empty' will default to all)${END}"
-    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | tempo | listener | kuma ${END}"
+    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma ${END}"
     exit 1
   fi
 
@@ -130,6 +131,9 @@ if [ "$1" == "stop" ]; then
   fi
   if stop_service "tempo" "$target"; then
     kill_process "/tempo" "Tempo"
+  fi
+  if stop_service "grafana" "$target"; then
+    apptainer instance stop grafana
   fi
   if stop_service "prometheus" "$target"; then
     apptainer instance stop prometheus
@@ -214,6 +218,7 @@ if [ "$1" == "health" ]; then
   "$HEALTHCHECK_DIR/api-healthcheck.sh" 0
   "$HEALTHCHECK_DIR/boom-healthcheck.sh"
   "$HEALTHCHECK_DIR/prometheus-healthcheck.sh" 0
+  "$HEALTHCHECK_DIR/grafana-healthcheck.sh" 0
   "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
   "$HEALTHCHECK_DIR/process-healthcheck.sh" "/otelcol" otel-collector
   "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh" 0

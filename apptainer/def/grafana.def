@@ -2,8 +2,29 @@ Bootstrap: docker
 From: grafana/grafana:11.5.2
 
 %startscript
-    exec /bin/prometheus --web.enable-otlp-receiver \
-      --config.file=/etc/prometheus/prometheus.yaml \
-      --storage.tsdb.path=/prometheus/data \
-      --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d} \
-    > "/var/log/prometheus.log" 2>&1
+    export GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+    export GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set and non-empty}
+    export GF_USERS_ALLOW_SIGN_UP=false
+    export GF_AUTH_ANONYMOUS_ENABLED=false
+    # Dashboards are read-only by default, as in the Docker stack. The
+    # provisioning script below only applies this value when it can rewrite
+    # dashboards.yaml, which the read-only bind mount prevents on purpose.
+    export GRAFANA_DASHBOARD_EDITABLE=${GRAFANA_DASHBOARD_EDITABLE:-false}
+    # Referenced as ${SLACK_WEBHOOK_URL} in provisioning/alerting/contact-points.yaml.
+    # An empty value would make Grafana fall back to the Slack chat API (which
+    # then requires a recipient + token), so when the env var is unset we
+    # substitute a syntactically valid but non-existent webhook URL: alert
+    # rules still fire and are visible in Grafana, and POSTs to the placeholder
+    # simply 404, signalling that no real webhook is configured.
+    export SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/UNSET/UNSET/UNSET}
+    # Without this, Grafana defaults its root URL to http://localhost:3000 and
+    # stamps that into alert notification "Source"/"Silence" links, which are
+    # useless outside the host. Unlike the Docker stack there is no Traefik in
+    # front of Grafana here, so the reachable URL is the host on port 3000.
+    # Set DOMAIN in .env (or GF_SERVER_ROOT_URL directly) to make links usable.
+    export GF_SERVER_ROOT_URL=${GF_SERVER_ROOT_URL:-http://${DOMAIN:-localhost}:3000}
+
+    # Same entrypoint wrapper as the Docker stack: it adjusts the dashboard
+    # provider config when writable, then execs Grafana's own /run.sh.
+    exec bash /scripts/grafana-dashboard-provisioning.sh /run.sh \
+      > /var/log/grafana/grafana.log 2>&1

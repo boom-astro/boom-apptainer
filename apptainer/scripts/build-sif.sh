@@ -16,6 +16,7 @@
 #     - "boom-cpu"     : builds BOOM CPU variant explicitly
 #     - "boom-gpu"     : builds BOOM GPU variant explicitly
 #     - "prometheus"   : builds Prometheus service
+#     - "grafana"      : builds Grafana service
 #     - "otel"         : builds OpenTelemetry Collector service
 #     - "tempo"        : builds Grafana Tempo service
 #     - "kuma"         : builds Uptime Kuma service
@@ -101,7 +102,7 @@ if start_service "tempo" "$1"; then
   apptainer build --force apptainer/sif/tempo.sif "docker://grafana/tempo:2.8.4"
 fi
 
-for service in mongo kafka valkey api prometheus kuma; do
+for service in mongo kafka valkey api prometheus grafana kuma; do
   if start_service "$service" "$1"; then
     apptainer build --force apptainer/sif/"$service".sif apptainer/def/"$service".def
   fi

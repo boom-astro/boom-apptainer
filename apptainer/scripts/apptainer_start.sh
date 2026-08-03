@@ -13,6 +13,7 @@
 #      - kafka       : starts the kafka instance
 #      - valkey      : starts the Valkey instance
 #      - prometheus  : starts the Prometheus instance
+#      - grafana     : starts the Grafana instance
 #      - otel        : starts OpenTelemetry Collector process
 #      - tempo       : starts the Grafana Tempo instance
 #      - listener    : starts Boom healthcheck listener process
@@ -56,9 +57,9 @@ start_service() {
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
   && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
-  && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
+  && [ "$2" != "grafana" ] && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | tempo | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
   exit 1
 fi
 
@@ -177,6 +178,32 @@ if start_service "prometheus" "$2"; then
 fi
 
 # -----------------------------
+# Grafana
+# -----------------------------
+if start_service "grafana" "$2"; then
+  if "$HEALTHCHECK_DIR/grafana-healthcheck.sh" 0 > /dev/null 2>&1; then
+    echo && echo -e "${YELLOW}$(current_datetime) - Grafana is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting Grafana"
+    mkdir -p "$PERSISTENT_DIR/grafana"
+    mkdir -p "$LOGS_DIR/grafana"
+    # The datasources file is bound over the checked-in one so the backends are
+    # reached on localhost instead of the Docker service names, and the
+    # dashboards are bound on top of the data directory (bind order matters).
+    apptainer instance start \
+      --env-file .env \
+      --bind "$PERSISTENT_DIR/grafana:/var/lib/grafana" \
+      --bind "$BOOM_DIR/config/grafana/provisioning:/etc/grafana/provisioning:ro" \
+      --bind "$BOOM_DIR/config/apptainer-grafana-datasources.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro" \
+      --bind "$BOOM_DIR/config/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
+      --bind "$BOOM_DIR/scripts/grafana-dashboard-provisioning.sh:/scripts/grafana-dashboard-provisioning.sh:ro" \
+      --bind "$LOGS_DIR/grafana:/var/log/grafana" \
+      "$SIF_DIR/grafana.sif" grafana
+    "$HEALTHCHECK_DIR/grafana-healthcheck.sh"
+  fi
+fi
+
+# -----------------------------
 # Grafana Tempo
 # -----------------------------
 if start_service "tempo" "$2"; then
@@ -262,7 +289,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
   elif [ -z "$survey" ]; then
     echo && echo -e "${RED}$(current_datetime) - Survey name not provided, consumer or scheduler cannot be started.${END}"
     echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
-    echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | otel | tempo | listener | kuma | all${END}"
+    echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
     echo -e "  ${YELLOW}The following arguments are only required if starting <all|boom|consumer|scheduler>${END}:"
     echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam | winter${END}"
     echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional for lsst)${END}"
