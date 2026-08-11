@@ -218,8 +218,6 @@ if [ "$1" == "health" ]; then
   "$HEALTHCHECK_DIR/api-healthcheck.sh" 0
   "$HEALTHCHECK_DIR/boom-healthcheck.sh"
   "$HEALTHCHECK_DIR/prometheus-healthcheck.sh" 0
-  "$HEALTHCHECK_DIR/grafana-healthcheck.sh" 0
-  "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
   "$HEALTHCHECK_DIR/process-healthcheck.sh" "/otelcol" otel-collector
   "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh" 0
   "$HEALTHCHECK_DIR/kuma-healthcheck.sh" 0
