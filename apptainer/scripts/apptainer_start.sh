@@ -13,9 +13,9 @@
 #      - kafka       : starts the kafka instance
 #      - valkey      : starts the Valkey instance
 #      - prometheus  : starts the Prometheus instance
-#      - grafana     : starts the Grafana instance
+#      - grafana     : starts the Grafana instance (opt-in, not part of "all")
 #      - otel        : starts OpenTelemetry Collector process
-#      - tempo       : starts the Grafana Tempo instance
+#      - tempo       : starts the Grafana Tempo instance (opt-in, not part of "all")
 #      - listener    : starts Boom healthcheck listener process
 #      - kuma        : starts the Kuma instance
 #
@@ -178,9 +178,9 @@ if start_service "prometheus" "$2"; then
 fi
 
 # -----------------------------
-# Grafana
+# Grafana (opt-in)
 # -----------------------------
-if start_service "grafana" "$2"; then
+if [ "$2" = "grafana" ]; then
   if "$HEALTHCHECK_DIR/grafana-healthcheck.sh" 0 > /dev/null 2>&1; then
     echo && echo -e "${YELLOW}$(current_datetime) - Grafana is already running${END}"
   else
@@ -204,9 +204,9 @@ if start_service "grafana" "$2"; then
 fi
 
 # -----------------------------
-# Grafana Tempo
+# Grafana Tempo (opt-in, re-enable the traces pipeline in apptainer-otel-collector-config.yaml first)
 # -----------------------------
-if start_service "tempo" "$2"; then
+if [ "$2" = "tempo" ]; then
   if "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo > /dev/null 2>&1; then
     echo && echo -e "${YELLOW}$(current_datetime) - Tempo is already running${END}"
   else
