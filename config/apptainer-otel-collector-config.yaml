@@ -12,11 +12,12 @@ processors:
 exporters:
   otlphttp/prometheus: # [^2]
     endpoint: "http://localhost:9090/api/v1/otlp" # [^3]
-  # Disabled with the traces pipeline below: Tempo is opt-in.
+  # Tempo is opt-in: swap nop for this exporter in the traces pipeline below.
   # otlp/tempo:
   #   endpoint: localhost:4319
   #   tls:
   #     insecure: true
+  nop:
   debug:
     verbosity: detailed
 
@@ -44,11 +45,12 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlphttp/prometheus]
-    # Disabled: spans are received on 4317 and dropped.
-    # traces:
-    #   receivers: [otlp]
-    #   processors: [batch]
-    #   exporters: [otlp/tempo]
+    # Spans are dropped, but the pipeline must exist: without it the OTLP
+    # receiver serves no TraceService and every boom app logs an export error.
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [nop]
 
 # [^1]: https://github.com/open-telemetry/opentelemetry-collector/tree/main/receiver/otlpreceiver
 
