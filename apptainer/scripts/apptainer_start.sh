@@ -21,7 +21,7 @@
 #
 # Additional arguments for 'boom', 'consumer', or 'scheduler':
 # $3 = survey name (required for consumer/scheduler)
-# $4 = date (optional, used by consumer)
+# $4 = date (optional, used by consumer; omit to follow the current UTC day)
 # $5 = program ID (optional, used by consumer)
 # $6 = scheduler config path (optional, used by scheduler)
 
@@ -292,7 +292,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
     echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
     echo -e "  ${YELLOW}The following arguments are only required if starting <all|boom|consumer|scheduler>${END}:"
     echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam | winter${END}"
-    echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional for lsst)${END}"
+    echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional, omit to follow the current day, set to replay a past one)${END}"
     echo -e "  ${BLUE}[program_id]:${END} ${GREEN}public | partnership | caltech${END} ${YELLOW}(only for ztf)${END}"
 
   else
@@ -314,8 +314,9 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       date="$4"
       progs="$5"
 
-      if [ -z "$date" ]; then
-        echo -e "${RED}Error: Date argument is required for consumer.${END}"
+      # Without a date the consumer follows the current UTC day and rolls over on its own.
+      if [ -n "$date" ] && ! [[ "$date" =~ ^[0-9]{8}$ ]]; then
+        echo -e "${RED}Error: Invalid date '$date', expected YYYYMMDD.${END}"
         exit 1
       fi
 
@@ -328,15 +329,15 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       fi
 
       ARGS=("$survey")
-      [ -n "$4" ] && ARGS+=("$date")
+      [ -n "$date" ] && ARGS+=("$date")
       [ -n "$progs" ] && ARGS+=("--programids" "$progs")
       if pgrep -f "/app/kafka_consumer ${ARGS[*]}" > /dev/null; then
-        echo -e "${YELLOW}Boom consumer already running for survey $survey${4:+ on date $4}${progs:+ for program $progs}.${END}"
+        echo -e "${YELLOW}Boom consumer already running for survey $survey${date:+ on date $date}${progs:+ for program $progs}.${END}"
       else
         apptainer exec --pwd /app \
           "instance://boom_$survey" /app/kafka_consumer "${ARGS[@]}" \
-          > "$LOGS_DIR/${survey}${4:+_$4}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
-        echo -e "${GREEN}Boom consumer started for survey $survey${4:+ on date $4}${progs:+ for program $progs}${END}"
+          > "$LOGS_DIR/${survey}${date:+_$date}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
+        echo -e "${GREEN}Boom consumer started for survey $survey${date:+ on date $date}${progs:+ for program $progs}${END}"
       fi
     fi
 

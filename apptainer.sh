@@ -96,10 +96,18 @@ if [ "$1" == "start" ]; then
     [ -n "$2" ] && ARGS+=("$2") # service to start
     shift
   fi
-  [ -n "$2" ] && ARGS+=("$2") # survey name
-  [ -n "$3" ] && ARGS+=("$3") # date
-  [ -n "$4" ] && ARGS+=("$4") # program ID
-  [ -n "$5" ] && ARGS+=("$5") # scheduler config path
+  if [ -n "$2" ]; then
+    ARGS+=("$2") # survey name
+    shift
+    if [[ "$2" =~ ^[0-9]{8}$ ]]; then
+      ARGS+=("$2") # date
+      shift
+    else
+      ARGS+=("")
+      [ -z "$2" ] && shift
+    fi
+    ARGS+=("$2" "$3") # program ID, scheduler config path
+  fi
   # See apptainer_start.sh for the full explanation of each argument
   "$SCRIPTS_DIR/apptainer_start.sh" "${ARGS[@]}"
   exit 0
@@ -171,13 +179,18 @@ if [ "$1" == "stop" ]; then
     match_mode="partial"
     ARGS=()
     [ -n "$3" ] && ARGS+=("$3") # survey, if not provided, all consumers are killed
-    [ -n "$4" ] && ARGS+=("$4") # date, if not provided, all dates are killed
-    if [ -n "$5" ]; then
-      if [ "$5" == "all" ]; then
+    if [[ "$4" =~ ^[0-9]{8}$ ]]; then
+      ARGS+=("$4") # date, if not provided, all dates are killed
+      progs="$5"
+    else
+      progs="$4"
+    fi
+    if [ -n "$progs" ]; then
+      if [ "$progs" == "all" ]; then
         ARGS+=("--programids" "public,partnership,caltech")
       else
         match_mode="exact"
-        ARGS+=("--programids" "$5") # program ID, if not provided, all program IDs are killed
+        ARGS+=("--programids" "$progs") # program ID, if not provided, all program IDs are killed
       fi
     fi
     kill_process "/app/kafka_consumer ${ARGS[*]}" consumer "$match_mode"
