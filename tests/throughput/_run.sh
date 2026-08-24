@@ -223,7 +223,7 @@ if [ "$APPTAINER" == "true" ]; then
   # -----------------------------
   echo && echo "$(current_datetime) - Starting Consumer"
   apptainer exec --pwd /app \
-    instance://benchmark_boom /app/kafka_consumer ztf 20250311 --programids public \
+    instance://benchmark_boom /app/kafka_consumer ztf --on 20250311 --programids public \
     > "$LOGS_DIR/consumer.log" 2>&1 &
   BG_PIDS+=($!)
   echo -e "${GREEN}Boom consumer started for survey ztf${END}"

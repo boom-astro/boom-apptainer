@@ -21,7 +21,9 @@
 #
 # Additional arguments for 'boom', 'consumer', or 'scheduler':
 # $3 = survey name (required for consumer/scheduler)
-# $4 = date (optional, used by consumer; omit to follow the current UTC day)
+# $4 = date option (optional, used by consumer; --from=YYYYMMDD to catch up from
+#      that night onwards, --on=YYYYMMDD to replay it alone, a bare YYYYMMDD
+#      means --from, omit to follow the current UTC day)
 # $5 = program ID (optional, used by consumer)
 # $6 = scheduler config path (optional, used by scheduler)
 
@@ -288,11 +290,11 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
 
   elif [ -z "$survey" ]; then
     echo && echo -e "${RED}$(current_datetime) - Survey name not provided, consumer or scheduler cannot be started.${END}"
-    echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
+    echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date_option] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
     echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
     echo -e "  ${YELLOW}The following arguments are only required if starting <all|boom|consumer|scheduler>${END}:"
     echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam | winter${END}"
-    echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional, omit to follow the current day, set to replay a past one)${END}"
+    echo -e "  ${BLUE}[date_option]:${END} ${GREEN}--from=YYYYMMDD | --on=YYYYMMDD | YYYYMMDD${END} ${YELLOW}(optional, omit to follow the current day, --from to catch up from a past one, --on to replay it alone)${END}"
     echo -e "  ${BLUE}[program_id]:${END} ${GREEN}public | partnership | caltech${END} ${YELLOW}(only for ztf)${END}"
 
   else
@@ -311,14 +313,17 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
     # Boom Consumer
     # -----------------------------
     if start_service "boom" "$2" || start_service "consumer" "$2"; then
-      date="$4"
+      date_option="$4"
       progs="$5"
 
       # Without a date the consumer follows the current UTC day and rolls over on its own.
-      if [ -n "$date" ] && ! [[ "$date" =~ ^[0-9]{8}$ ]]; then
-        echo -e "${RED}Error: Invalid date '$date', expected YYYYMMDD.${END}"
+      if [[ "$date_option" =~ ^[0-9]{8}$ ]]; then
+        date_option="--from=$date_option"
+      elif [ -n "$date_option" ] && ! [[ "$date_option" =~ ^--(from|on)=[0-9]{8}$ ]]; then
+        echo -e "${RED}Error: Invalid date option '$date_option', expected --from=YYYYMMDD, --on=YYYYMMDD or YYYYMMDD.${END}"
         exit 1
       fi
+      date="${date_option#*=}"
 
       if [[ -n "$progs" && "$progs" == "all" ]]; then
         progs="public,partnership,caltech"
@@ -329,15 +334,15 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       fi
 
       ARGS=("$survey")
-      [ -n "$date" ] && ARGS+=("$date")
+      [ -n "$date_option" ] && ARGS+=("$date_option")
       [ -n "$progs" ] && ARGS+=("--programids" "$progs")
       if pgrep -f "/app/kafka_consumer ${ARGS[*]}" > /dev/null; then
-        echo -e "${YELLOW}Boom consumer already running for survey $survey${date:+ on date $date}${progs:+ for program $progs}.${END}"
+        echo -e "${YELLOW}Boom consumer already running for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}.${END}"
       else
         apptainer exec --pwd /app \
           "instance://boom_$survey" /app/kafka_consumer "${ARGS[@]}" \
           > "$LOGS_DIR/${survey}${date:+_$date}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
-        echo -e "${GREEN}Boom consumer started for survey $survey${date:+ on date $date}${progs:+ for program $progs}${END}"
+        echo -e "${GREEN}Boom consumer started for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}${END}"
       fi
     fi
 

@@ -470,13 +470,21 @@ apptainer shell --pwd /app instance://boom
 ```
 Then you can run the binaries with:
 ```bash
-/app/kafka_consumer <SURVEY> [DATE] --programids [PROGRAMIDS]
+/app/kafka_consumer <SURVEY> [--from DATE | --on DATE] --programids [PROGRAMIDS]
 /app/scheduler <SURVEY> [CONFIG_PATH]
 ```
 Or you can run them directly with:
 ```bash
-apptainer exec instance://boom /app/kafka_consumer <SURVEY> [DATE] --programids [PROGRAMIDS]
+apptainer exec instance://boom /app/kafka_consumer <SURVEY> [--from DATE | --on DATE] --programids [PROGRAMIDS]
 apptainer exec instance://boom /app/scheduler <SURVEY> [CONFIG_PATH]
+```
+
+The `apptainer.sh` wrapper takes the same date options in the argument following
+the survey, either as two tokens or as `--from=DATE`/`--on=DATE`, and a bare
+`DATE` means `--from`:
+```bash
+./apptainer.sh start consumer ztf --on 20250311 public
+./apptainer.sh stop consumer ztf --on 20250311 public
 ```
 
 The scheduler prints a variety of messages to your terminal, e.g.:

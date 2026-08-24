@@ -99,8 +99,11 @@ if [ "$1" == "start" ]; then
   if [ -n "$2" ]; then
     ARGS+=("$2") # survey name
     shift
-    if [[ "$2" =~ ^[0-9]{8}$ ]]; then
-      ARGS+=("$2") # date
+    if [[ "$2" =~ ^--(from|on)$ ]]; then
+      ARGS+=("$2=$3")
+      shift 2
+    elif [[ "$2" =~ ^(--(from|on)=)?[0-9]{8}$ ]]; then
+      ARGS+=("$2")
       shift
     else
       ARGS+=("")
@@ -179,9 +182,14 @@ if [ "$1" == "stop" ]; then
     match_mode="partial"
     ARGS=()
     [ -n "$3" ] && ARGS+=("$3") # survey, if not provided, all consumers are killed
-    if [[ "$4" =~ ^[0-9]{8}$ ]]; then
-      ARGS+=("$4") # date, if not provided, all dates are killed
-      progs="$5"
+    progs="$5"
+    if [[ "$4" =~ ^--(from|on)$ ]]; then
+      ARGS+=("$4=$5")
+      progs="$6"
+    elif [[ "$4" =~ ^[0-9]{8}$ ]]; then
+      ARGS+=("--from=$4")
+    elif [[ "$4" =~ ^--(from|on)=[0-9]{8}$ ]]; then
+      ARGS+=("$4")
     else
       progs="$4"
     fi
