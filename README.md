@@ -17,7 +17,7 @@ BOOM is an alert broker. What sets it apart from other alert brokers is that it 
 
 1. The `Kafka` consumer(s), reading alerts from astronomical surveys' `Kafka` topics to transfer them to `Redis`/`Valkey` in-memory queues.
 2. The Alert Ingestion workers, reading alerts from the `Redis`/`Valkey` queues, responsible of formatting them to BSON documents, and enriching them with crossmatches from archival astronomical catalogs and other surveys before writing the formatted alert packets to a `MongoDB` database.
-3. The enrichment workers, running alerts through a series of enrichment classifiers, and writing the results back to the `MongoDB` database.
+3. The enrichment workers, running alerts through a series of enrichment classifiers (ML inference) and per-alert light-curve fitting (Villar fits, GPU-accelerated when enabled), and writing the results back to the `MongoDB` database.
 4. The Filter workers, running user-defined filters on the alerts, and sending the results to Kafka topics for other services to consume.
 
 Workers are managed by a Scheduler that can spawn or kill workers of each type.
@@ -486,6 +486,14 @@ the survey, either as two tokens or as `--from=DATE`/`--on=DATE`, and a bare
 ./apptainer.sh start consumer ztf --on 20250311 public
 ./apptainer.sh stop consumer ztf --on 20250311 public
 ```
+
+ZTF enrichment derives solar system geometry from `MPC_orbits`, which is
+refreshed by a one-shot job — the Apptainer counterpart of the `mpcorb-ingest`
+Compose service. Run it from cron once a day, ahead of the observing night:
+```bash
+./apptainer.sh mpcorb
+```
+Any extra argument is forwarded to the binary, e.g. `./apptainer.sh mpcorb --dry-run`.
 
 The scheduler prints a variety of messages to your terminal, e.g.:
 
