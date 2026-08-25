@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # Script to manage Boom using Apptainer.
-# $1 = action: build | start | stop | restart | health | benchmark | filters | backup | restore | log | error | show
+# $1 = action: build | start | stop | restart | health | benchmark | filters | mpcorb | backup | restore | log | error | show
 
 BOOM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # Retrieves the boom directory
 SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
 HEALTHCHECK_DIR="$SCRIPTS_DIR/healthcheck"
 LOGS_DIR="$BOOM_DIR/logs/boom"
+SIF_DIR="$BOOM_DIR/apptainer/sif"
 
 BLUE="\e[0;34m"
 RED="\e[31m"
@@ -69,9 +70,9 @@ colorize_log() {
 }
 
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
-  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] \
+  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] && [ "$1" != "mpcorb" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
-  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|backup|restore|error|show} [args...]"
+  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpcorb|backup|restore|error|show} [args...]"
   exit 1
 fi
 
@@ -288,6 +289,23 @@ if [ "$1" == "filters" ]; then
   path_to_file="$2"
   "$SCRIPTS_DIR/add_filters.sh" "$path_to_file"
   exit 0
+fi
+
+# -----------------------------
+# Refresh MPC orbital elements
+# -----------------------------
+if [ "$1" == "mpcorb" ]; then
+  shift
+  mkdir -p "$LOGS_DIR"
+  # A one-shot job, so it runs straight from the SIF instead of a boom instance.
+  # It only needs Mongo and the network, so the CPU image is enough even when
+  # the ZTF stack runs on the GPU one. Run it from cron ahead of the night.
+  apptainer exec --pwd /app \
+    --bind "$BOOM_DIR/.env:/app/.env" \
+    --bind "$BOOM_DIR/config.yaml:/app/config.yaml" \
+    "$SIF_DIR/boom.sif" /app/mpcorb_ingest "$@" \
+    2>&1 | tee "$LOGS_DIR/mpcorb_ingest.log"
+  exit "${PIPESTATUS[0]}"
 fi
 
 # -----------------------------
