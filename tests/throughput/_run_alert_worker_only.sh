@@ -196,7 +196,7 @@ reset_mutable_state
 # -----------------------------
 echo && echo "$(current_datetime) - Prefilling packets queue (max-in-queue=$MAX_IN_QUEUE)"
 apptainer exec --pwd /app instance://benchmark_boom \
-    /app/kafka_consumer ztf 20250311 --programids public \
+    /app/kafka_consumer ztf --on 20250311 --programids public \
         --max-in-queue "$MAX_IN_QUEUE" \
     > "$LOGS_DIR/prefill_consumer.log" 2>&1 &
 PREFILL_PID=$!

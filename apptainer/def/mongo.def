@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: mongo:8.0
+From: mongo:8.2
 
 %runscript
     export MONGO_INITDB_ROOT_USERNAME=${BOOM_DATABASE__USERNAME:-mongoadmin}

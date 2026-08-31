@@ -13,13 +13,17 @@
 #      - kafka       : starts the kafka instance
 #      - valkey      : starts the Valkey instance
 #      - prometheus  : starts the Prometheus instance
+#      - grafana     : starts the Grafana instance (opt-in, not part of "all")
 #      - otel        : starts OpenTelemetry Collector process
+#      - tempo       : starts the Grafana Tempo instance (opt-in, not part of "all")
 #      - listener    : starts Boom healthcheck listener process
 #      - kuma        : starts the Kuma instance
 #
 # Additional arguments for 'boom', 'consumer', or 'scheduler':
 # $3 = survey name (required for consumer/scheduler)
-# $4 = date (optional, used by consumer)
+# $4 = date option (optional, used by consumer; --from=YYYYMMDD to catch up from
+#      that night onwards, --on=YYYYMMDD to replay it alone, a bare YYYYMMDD
+#      means --from, omit to follow the current UTC day)
 # $5 = program ID (optional, used by consumer)
 # $6 = scheduler config path (optional, used by scheduler)
 
@@ -55,9 +59,9 @@ start_service() {
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
   && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
-  && [ "$2" != "otel" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
+  && [ "$2" != "grafana" ] && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
   exit 1
 fi
 
@@ -176,6 +180,55 @@ if start_service "prometheus" "$2"; then
 fi
 
 # -----------------------------
+# Grafana (opt-in)
+# -----------------------------
+if [ "$2" = "grafana" ]; then
+  if "$HEALTHCHECK_DIR/grafana-healthcheck.sh" 0 > /dev/null 2>&1; then
+    echo && echo -e "${YELLOW}$(current_datetime) - Grafana is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting Grafana"
+    mkdir -p "$PERSISTENT_DIR/grafana"
+    mkdir -p "$LOGS_DIR/grafana"
+    # The datasources file is bound over the checked-in one so the backends are
+    # reached on localhost instead of the Docker service names, and the
+    # dashboards are bound on top of the data directory (bind order matters).
+    apptainer instance start \
+      --env-file .env \
+      --bind "$PERSISTENT_DIR/grafana:/var/lib/grafana" \
+      --bind "$BOOM_DIR/config/grafana/provisioning:/etc/grafana/provisioning:ro" \
+      --bind "$BOOM_DIR/config/apptainer-grafana-datasources.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro" \
+      --bind "$BOOM_DIR/config/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
+      --bind "$BOOM_DIR/scripts/grafana-dashboard-provisioning.sh:/scripts/grafana-dashboard-provisioning.sh:ro" \
+      --bind "$LOGS_DIR/grafana:/var/log/grafana" \
+      "$SIF_DIR/grafana.sif" grafana
+    "$HEALTHCHECK_DIR/grafana-healthcheck.sh"
+  fi
+fi
+
+# -----------------------------
+# Grafana Tempo (opt-in, re-enable the traces pipeline in apptainer-otel-collector-config.yaml first)
+# -----------------------------
+if [ "$2" = "tempo" ]; then
+  if "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo > /dev/null 2>&1; then
+    echo && echo -e "${YELLOW}$(current_datetime) - Tempo is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting Tempo"
+    mkdir -p "$PERSISTENT_DIR/tempo"
+    mkdir -p "$LOGS_DIR/tempo"
+    # Tempo inherits the host OTEL_EXPORTER_OTLP_ENDPOINT, so disable its self-export.
+    apptainer exec \
+      --env OTEL_TRACES_EXPORTER=none \
+      --bind "$BOOM_DIR/config/apptainer-tempo-config.yaml:/etc/tempo/config.yaml" \
+      --bind "$PERSISTENT_DIR/tempo:/var/tempo" \
+      --bind "$LOGS_DIR/tempo:/var/log/tempo" \
+      "$SIF_DIR/tempo.sif" /tempo -config.file=/etc/tempo/config.yaml \
+      > "$LOGS_DIR/tempo/tempo.log" 2>&1 &
+    sleep 1
+    "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
+  fi
+fi
+
+# -----------------------------
 # OpenTelemetry Collector
 # -----------------------------
 if start_service "otel" "$2"; then
@@ -214,7 +267,7 @@ fi
 if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "scheduler" "$2"; then
   survey=$3
   # Resolve BOOM image variant (CPU vs GPU) based on BOOM_GPU__ENABLED.
-  # Only ZTF actually uses the GPU; LSST/DECam always run on CPU.
+  # Only ZTF actually uses the GPU; LSST/DECam/WINTER always run on CPU.
   BOOM_SIF="boom.sif"
   NV_FLAG=""
   if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$survey" = "ztf" ]; then
@@ -237,11 +290,11 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
 
   elif [ -z "$survey" ]; then
     echo && echo -e "${RED}$(current_datetime) - Survey name not provided, consumer or scheduler cannot be started.${END}"
-    echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
-    echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | otel | listener | kuma | all${END}"
+    echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date_option] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
+    echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
     echo -e "  ${YELLOW}The following arguments are only required if starting <all|boom|consumer|scheduler>${END}:"
-    echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam${END}"
-    echo -e "  ${BLUE}[date]:${END} ${GREEN}YYYYMMDD${END} ${YELLOW}(optional for lsst)${END}"
+    echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam | winter${END}"
+    echo -e "  ${BLUE}[date_option]:${END} ${GREEN}--from=YYYYMMDD | --on=YYYYMMDD | YYYYMMDD${END} ${YELLOW}(optional, omit to follow the current day, --from to catch up from a past one, --on to replay it alone)${END}"
     echo -e "  ${BLUE}[program_id]:${END} ${GREEN}public | partnership | caltech${END} ${YELLOW}(only for ztf)${END}"
 
   else
@@ -260,13 +313,17 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
     # Boom Consumer
     # -----------------------------
     if start_service "boom" "$2" || start_service "consumer" "$2"; then
-      date="$4"
+      date_option="$4"
       progs="$5"
 
-      if [ -z "$date" ]; then
-        echo -e "${RED}Error: Date argument is required for consumer.${END}"
+      # Without a date the consumer follows the current UTC day and rolls over on its own.
+      if [[ "$date_option" =~ ^[0-9]{8}$ ]]; then
+        date_option="--from=$date_option"
+      elif [ -n "$date_option" ] && ! [[ "$date_option" =~ ^--(from|on)=[0-9]{8}$ ]]; then
+        echo -e "${RED}Error: Invalid date option '$date_option', expected --from=YYYYMMDD, --on=YYYYMMDD or YYYYMMDD.${END}"
         exit 1
       fi
+      date="${date_option#*=}"
 
       if [[ -n "$progs" && "$progs" == "all" ]]; then
         progs="public,partnership,caltech"
@@ -277,15 +334,15 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       fi
 
       ARGS=("$survey")
-      [ -n "$4" ] && ARGS+=("$date")
+      [ -n "$date_option" ] && ARGS+=("$date_option")
       [ -n "$progs" ] && ARGS+=("--programids" "$progs")
       if pgrep -f "/app/kafka_consumer ${ARGS[*]}" > /dev/null; then
-        echo -e "${YELLOW}Boom consumer already running for survey $survey${4:+ on date $4}${progs:+ for program $progs}.${END}"
+        echo -e "${YELLOW}Boom consumer already running for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}.${END}"
       else
         apptainer exec --pwd /app \
           "instance://boom_$survey" /app/kafka_consumer "${ARGS[@]}" \
-          > "$LOGS_DIR/${survey}${4:+_$4}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
-        echo -e "${GREEN}Boom consumer started for survey $survey${4:+ on date $4}${progs:+ for program $progs}${END}"
+          > "$LOGS_DIR/${survey}${date:+_$date}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
+        echo -e "${GREEN}Boom consumer started for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}${END}"
       fi
     fi
 

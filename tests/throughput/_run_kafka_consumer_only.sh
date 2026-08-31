@@ -200,7 +200,7 @@ if [ -n "$BATCH_SIZE" ]; then
 fi
 echo && echo "$(current_datetime) - Starting Consumer (processes=$N_PROCESSES, max-in-queue=$MAX_IN_QUEUE, batch_size=${BATCH_SIZE:-default})"
 apptainer exec --pwd /app "${BATCH_ENV_FLAGS[@]}" instance://benchmark_boom \
-    /app/kafka_consumer ztf 20250311 --programids public \
+    /app/kafka_consumer ztf --on 20250311 --programids public \
         --processes "$N_PROCESSES" --max-in-queue "$MAX_IN_QUEUE" \
     > "$LOGS_DIR/consumer.log" 2>&1 &
 CONSUMER_PID=$!

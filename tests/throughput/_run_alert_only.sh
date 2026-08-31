@@ -208,7 +208,7 @@ fi
 # measurement focused on alert-worker latency rather than consumer parallelism.
 echo && echo "$(current_datetime) - Starting Consumer"
 apptainer exec --pwd /app instance://benchmark_boom \
-    /app/kafka_consumer ztf 20250311 --programids public \
+    /app/kafka_consumer ztf --on 20250311 --programids public \
     > "$LOGS_DIR/consumer.log" 2>&1 &
 CONSUMER_PID=$!
 BG_PIDS+=($CONSUMER_PID)

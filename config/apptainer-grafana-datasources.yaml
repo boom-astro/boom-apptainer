@@ -1,0 +1,31 @@
+# Grafana datasources for the Apptainer stack.
+#
+# Every Apptainer instance shares the host network namespace, so the backends
+# are reached on localhost instead of the Docker service names used by
+# config/grafana/provisioning/datasources/prometheus.yaml. This file is bound
+# over that one at startup (see apptainer_start.sh).
+#
+# Loki is not part of the Apptainer stack, so it is omitted here, and with it
+# the Loki-based log correlation of the Tempo datasource.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    isDefault: true
+    editable: false
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://localhost:3200
+    editable: false
+    jsonData:
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

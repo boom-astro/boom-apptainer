@@ -1,23 +1,19 @@
 Bootstrap: docker
-From: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+From: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+Stage: build
 
-%environment
-    export PATH=/app:/opt/kafka/bin:/root/.cargo/bin:$PATH
-    export LD_LIBRARY_PATH=/opt/ort:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-    export ORT_DYLIB_PATH=/opt/ort/libonnxruntime.so
-    # Optional overrides
-    export BOOM_DATABASE__HOST=localhost
+# The `gpu` feature pulls in villar-pso, whose build script compiles CUDA
+# kernels with nvcc, so this stage needs the devel image. The final stage below
+# only runs them, so it goes back to the runtime image and the SIF stays small.
 
 %files
     Cargo.toml /app/Cargo.toml
     Cargo.lock /app/Cargo.lock
     apache-avro-macros /app/apache-avro-macros
-    data/models /app/data/models
-    data/ls_footprint_moc.fits /app/data/ls_footprint_moc.fits
     src /app/src
 
 %post
-    KAFKA_VERSION=4.1.1
+    KAFKA_VERSION=4.3.1
     SCALA_VERSION=2.13
     ONNXRUNTIME_GPU_VERSION=1.24.4
     RUST_VERSION=1.93.1
@@ -28,13 +24,14 @@ From: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
       ca-certificates curl bash tar xz-utils \
       gcc g++ libhdf5-dev libclang-dev perl make \
       libsasl2-dev libsasl2-2 pkg-config \
-      default-jre-headless \
       python3 python3-venv && \
     apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-    # Install Rust toolchain (build only, removed at the end)
+    # Install Rust toolchain
     curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ${RUST_VERSION}
-    export PATH="/root/.cargo/bin:$PATH"
+    export PATH="/root/.cargo/bin:/usr/local/cuda/bin:$PATH"
+    export LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib"
 
     # Install ONNX Runtime GPU shared libs via pip, then copy them to /opt/ort
     python3 -m venv /opt/ort-py
@@ -49,25 +46,55 @@ From: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
     rm -rf /opt/ort-py
 
     # Install Kafka CLI tools
-    curl -fsSL https://dlcdn.apache.org/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz -o /tmp/kafka.tgz && \
+    # archive.apache.org keeps every release permanently, unlike dlcdn.apache.org
+    # which only serves the latest patch of each minor version.
+    { curl -fsSL https://archive.apache.org/dist/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz -o /tmp/kafka.tgz && \
     tar -xzf /tmp/kafka.tgz -C /opt && \
-    ln -s /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
-    rm -f /tmp/kafka.tgz
+    mv /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
+    rm -f /tmp/kafka.tgz ; } || exit 1
 
     cd /app || exit 1
-    cargo build --release
+    cargo build --release --features gpu
 
-    cp /app/target/release/kafka_producer /app/kafka_producer
-    cp /app/target/release/kafka_consumer /app/kafka_consumer
-    cp /app/target/release/scheduler /app/scheduler
-    cp /app/target/release/migrate_fp_flux /app/migrate_fp_flux
-    cp /app/target/release/migrate_snr /app/migrate_snr
-    cp /app/target/release/reprocess_crossmatch /app/reprocess_crossmatch
+    mkdir -p /app/bin
+    cp /app/target/release/kafka_producer \
+       /app/target/release/kafka_consumer \
+       /app/target/release/scheduler \
+       /app/target/release/migrate_fp_flux \
+       /app/target/release/migrate_snr \
+       /app/target/release/reprocess_crossmatch \
+       /app/target/release/mpcorb_ingest \
+       /app/bin/
 
-    # Cleanup: remove build deps and artifacts to reduce image size
-    apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev pkg-config python3-venv
-    apt-get autoremove -y
-    apt-get clean
-    rm -rf /app/target /app/src /app/apache-avro-macros /app/Cargo.toml /app/Cargo.lock
-    rm -rf /root/.cargo /root/.rustup
-    rm -rf /var/lib/apt/lists/*
+Bootstrap: docker
+From: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+Stage: final
+
+%environment
+    export PATH=/app:/opt/kafka/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/ort:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    export ORT_DYLIB_PATH=/opt/ort/libonnxruntime.so
+    # Optional overrides
+    export BOOM_DATABASE__HOST=localhost
+
+%files
+    data/models /app/data/models
+    data/ls_footprint_moc.fits /app/data/ls_footprint_moc.fits
+
+%files from build
+    /app/bin/kafka_producer /app/kafka_producer
+    /app/bin/kafka_consumer /app/kafka_consumer
+    /app/bin/scheduler /app/scheduler
+    /app/bin/migrate_fp_flux /app/migrate_fp_flux
+    /app/bin/migrate_snr /app/migrate_snr
+    /app/bin/reprocess_crossmatch /app/reprocess_crossmatch
+    /app/bin/mpcorb_ingest /app/mpcorb_ingest
+    /opt/ort /opt/
+    /opt/kafka /opt/
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl bash libsasl2-2 default-jre-headless && \
+    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*

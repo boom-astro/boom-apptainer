@@ -1,12 +1,14 @@
 #!/bin/bash
 
 # Script to manage Boom using Apptainer.
-# $1 = action: build | start | stop | restart | health | benchmark | filters | backup | restore | log | error | show
+# $1 = action: build | start | stop | restart | health | benchmark | filters | mpc | backup | restore | log | error | show
 
 BOOM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # Retrieves the boom directory
 SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
 HEALTHCHECK_DIR="$SCRIPTS_DIR/healthcheck"
 LOGS_DIR="$BOOM_DIR/logs/boom"
+SIF_DIR="$BOOM_DIR/apptainer/sif"
+MONGO_SHUTDOWN_TIMEOUT=${MONGO_SHUTDOWN_TIMEOUT:-900}
 
 BLUE="\e[0;34m"
 RED="\e[31m"
@@ -43,6 +45,54 @@ kill_process() {
   fi
 }
 
+mongod_alive() {
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null)
+  [ -n "$state" ] && [ "${state:0:1}" != "Z" ]
+}
+
+stop_mongo() {
+  local instance_pid mongod_pid
+  instance_pid=$(apptainer instance list 2>/dev/null | awk '$1 == "mongo" {print $2}')
+  if [ -z "$instance_pid" ]; then
+    echo -e "${YELLOW}WARNING${END}: mongo instance is not running"
+    return 0
+  fi
+
+  # mongod closes its port when shutdown starts and apptainer force-kills at 10s, so wait on the process.
+  mongod_pid=$(pgrep -P "$instance_pid" mongod | head -1)
+  [ -z "$mongod_pid" ] && mongod_pid="$instance_pid"
+
+  load_env
+
+  echo -e "${BLUE}INFO${END}:    Stopping MongoDB, flushing the cache (this can take several minutes)"
+  local output
+  output=$(apptainer exec instance://mongo mongosh \
+    "mongodb://$BOOM_DATABASE__USERNAME:$BOOM_DATABASE__PASSWORD@localhost:27017/admin?authSource=admin" \
+    --quiet --eval 'db.adminCommand({shutdown: 1})' 2>&1)
+
+  if grep -qiE "authentication failed|not authorized|unauthorized" <<< "$output"; then
+    echo -e "${RED}ERROR${END}:   MongoDB refused the shutdown command:"
+    echo "$output" | tail -3
+    return 1
+  fi
+
+  local waited=0
+  while mongod_alive "$mongod_pid"; do
+    if [ "$waited" -ge "$MONGO_SHUTDOWN_TIMEOUT" ]; then
+      echo -e "${RED}ERROR${END}:   MongoDB still up after ${MONGO_SHUTDOWN_TIMEOUT}s. Leaving it running"
+      echo -e "         rather than force-killing it; see $LOGS_DIR/mongodb/mongo.log."
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+    [ $((waited % 60)) -eq 0 ] && echo -e "${BLUE}INFO${END}:    still flushing (${waited}s)"
+  done
+
+  apptainer instance stop mongo > /dev/null 2>&1
+  echo -e "${GREEN}MongoDB shut down cleanly after ${waited}s${END}"
+}
+
 stop_service() {
     local service="$1"
     local target="$2"
@@ -52,10 +102,26 @@ stop_service() {
     return 1
 }
 
+colorize_log() {
+    awk '
+    {
+        for (i = 1; i <= NF; i++) {
+            if      ($i == "ERROR") $i = "\033[31m" $i "\033[0m"
+            else if ($i == "WARN")  $i = "\033[33m" $i "\033[0m"
+            else if ($i == "INFO")  $i = "\033[32m" $i "\033[0m"
+            else if ($i == "DEBUG") $i = "\033[36m" $i "\033[0m"
+            else if ($i == "TRACE") $i = "\033[35m" $i "\033[0m"
+            else if ($i ~ /^[0-9]+-[0-9]+-[0-9]+T/) $i = "\033[90m" $i "\033[0m"
+        }
+        print
+        fflush()
+    }'
+}
+
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
-  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] \
+  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] && [ "$1" != "mpc" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
-  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|backup|restore|error|show} [args...]"
+  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpc|backup|restore|error|show} [args...]"
   exit 1
 fi
 
@@ -74,16 +140,27 @@ fi
 if [ "$1" == "start" ]; then
   ARGS=("$BOOM_DIR")
   # Check if $2 is a survey name
-  if [ -z "$2" ] || [ "$2" = "lsst" ] || [ "$2" = "ztf" ] || [ "$2" = "decam" ]; then
+  if [ -z "$2" ] || [ "$2" = "lsst" ] || [ "$2" = "ztf" ] || [ "$2" = "decam" ] || [ "$2" = "winter" ]; then
     ARGS+=("all") # service to start
   else
     [ -n "$2" ] && ARGS+=("$2") # service to start
     shift
   fi
-  [ -n "$2" ] && ARGS+=("$2") # survey name
-  [ -n "$3" ] && ARGS+=("$3") # date
-  [ -n "$4" ] && ARGS+=("$4") # program ID
-  [ -n "$5" ] && ARGS+=("$5") # scheduler config path
+  if [ -n "$2" ]; then
+    ARGS+=("$2") # survey name
+    shift
+    if [[ "$2" =~ ^--(from|on)$ ]]; then
+      ARGS+=("$2=$3")
+      shift 2
+    elif [[ "$2" =~ ^(--(from|on)=)?[0-9]{8}$ ]]; then
+      ARGS+=("$2")
+      shift
+    else
+      ARGS+=("")
+      [ -z "$2" ] && shift
+    fi
+    ARGS+=("$2" "$3") # program ID, scheduler config path
+  fi
   # See apptainer_start.sh for the full explanation of each argument
   "$SCRIPTS_DIR/apptainer_start.sh" "${ARGS[@]}"
   exit 0
@@ -96,10 +173,11 @@ if [ "$1" == "stop" ]; then
   target="$2"
   if [ -n "$target" ] && [ "$target" != "all" ] && [[ "$target" != boom* ]] && [ "$target" != "consumer" ] && [ "$target" != "scheduler" ] \
     && [ "$target" != "api" ] && [ "$target" != "dev" ] && [ "$target" != "mongo" ] && [ "$target" != "kafka" ] && [ "$target" != "valkey" ] \
-    && [ "$target" != "prometheus" ] && [ "$target" != "otel" ] && [ "$target" != "listener" ] && [ "$target" != "kuma" ]; then
+    && [ "$target" != "prometheus" ] && [ "$target" != "grafana" ] && [ "$target" != "otel" ] && [ "$target" != "tempo" ] \
+    && [ "$target" != "listener" ] && [ "$target" != "kuma" ]; then
     echo -e "${RED}Error: Invalid service name '$target'.${END}"
     echo -e "Usage: ${BLUE}$0 stop [service|all|'empty']${END} ${YELLOW}('empty' will default to all)${END}"
-    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | otel | listener | kuma ${END}"
+    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma ${END}"
     exit 1
   fi
 
@@ -111,6 +189,12 @@ if [ "$1" == "stop" ]; then
   fi
   if stop_service "otel" "$target"; then
     kill_process "/otelcol" "Otel collector"
+  fi
+  if stop_service "tempo" "$target"; then
+    kill_process "/tempo" "Tempo"
+  fi
+  if stop_service "grafana" "$target"; then
+    apptainer instance stop grafana
   fi
   if stop_service "prometheus" "$target"; then
     apptainer instance stop prometheus
@@ -141,17 +225,30 @@ if [ "$1" == "stop" ]; then
     if apptainer instance list | grep -q "boom_decam"; then
       apptainer instance stop "boom_decam"
     fi
+    if apptainer instance list | grep -q "boom_winter"; then
+      apptainer instance stop "boom_winter"
+    fi
   elif stop_service "consumer" "$target"; then
     match_mode="partial"
     ARGS=()
     [ -n "$3" ] && ARGS+=("$3") # survey, if not provided, all consumers are killed
-    [ -n "$4" ] && ARGS+=("$4") # date, if not provided, all dates are killed
-    if [ -n "$5" ]; then
-      if [ "$5" == "all" ]; then
+    progs="$5"
+    if [[ "$4" =~ ^--(from|on)$ ]]; then
+      ARGS+=("$4=$5")
+      progs="$6"
+    elif [[ "$4" =~ ^[0-9]{8}$ ]]; then
+      ARGS+=("--from=$4")
+    elif [[ "$4" =~ ^--(from|on)=[0-9]{8}$ ]]; then
+      ARGS+=("$4")
+    else
+      progs="$4"
+    fi
+    if [ -n "$progs" ]; then
+      if [ "$progs" == "all" ]; then
         ARGS+=("--programids" "public,partnership,caltech")
       else
         match_mode="exact"
-        ARGS+=("--programids" "$5") # program ID, if not provided, all program IDs are killed
+        ARGS+=("--programids" "$progs") # program ID, if not provided, all program IDs are killed
       fi
     fi
     kill_process "/app/kafka_consumer ${ARGS[*]}" consumer "$match_mode"
@@ -165,10 +262,11 @@ if [ "$1" == "stop" ]; then
   if stop_service "kafka" "$target"; then
     apptainer instance stop kafka
   fi
+  mongo_status=0
   if stop_service "mongo" "$target"; then
-    apptainer instance stop mongo
+    stop_mongo || mongo_status=$?
   fi
-  exit 0
+  exit "$mongo_status"
 fi
 
 # -----------------------------
@@ -176,7 +274,7 @@ fi
 # -----------------------------
 if [ "$1" == "restart" ]; then
   shift
-  "$0" stop "$@"
+  "$0" stop "$@" || exit $?
   "$0" start "$@"
   exit 0
 fi
@@ -202,23 +300,21 @@ fi
 # Run benchmark
 # -----------------------------
 if [ "$1" == "benchmark" ]; then
+  shift # drop "benchmark"
+
   # If "init" is passed, install the required Python packages
   if [ "$2" == "init" ]; then
     pip install pandas pyyaml astropy confluent-kafka
-  fi
-
-  # If "init" or "build" is passed, build the SIF files needed for the benchmark
-  if [ "$2" == "init" ] || [ "$2" == "build" ]; then
-    "$0" build benchmark
+    shift # drop "init"
   fi
 
   # Check if "gpu" is passed as an argument to enable GPU benchmark mode
-  if [ "$2" == "gpu" ] || [ "$3" == "gpu" ]; then
-    # Capture GPU device IDs from the arg right after "gpu" (optional, comma-separated, e.g. 0,1,2,3)
-    if [ "$2" == "gpu" ]; then
-      gpu_ids="$3"
-    elif [ "$3" == "gpu" ]; then
-      gpu_ids="$4"
+  if [ "$1" == "gpu" ]; then
+    shift # drop "gpu"
+    gpu_ids=""
+    if [[ "$1" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+      gpu_ids="$1"
+      shift # drop gpu IDs
     fi
     echo -e "${YELLOW}GPU benchmark mode enabled. Setting BOOM_GPU__ENABLED to true.${END}"
     export BOOM_GPU__ENABLED=true
@@ -231,13 +327,8 @@ if [ "$1" == "benchmark" ]; then
     export BOOM_GPU__ENABLED=false
   fi
 
-  # Run the benchmark
-  if [ "$2" == "keep-up" ] || [ "$3" == "keep-up" ]; then
-    echo -e "${YELLOW}Keeping services up after benchmark completion.${END}"
-    python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer --keep-up
-  else
-    python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer
-  fi
+  # Forward every remaining arg as-is to run.py
+  python3 "$BOOM_DIR/tests/throughput/run.py" --apptainer "$@"
   exit 0
 fi
 
@@ -248,6 +339,23 @@ if [ "$1" == "filters" ]; then
   path_to_file="$2"
   "$SCRIPTS_DIR/add_filters.sh" "$path_to_file"
   exit 0
+fi
+
+# -----------------------------
+# Refresh MPC orbital elements
+# -----------------------------
+if [ "$1" == "mpc" ]; then
+  shift
+  mkdir -p "$LOGS_DIR"
+  # A one-shot job, so it runs straight from the SIF instead of a boom instance.
+  # It only needs Mongo and the network, so the CPU image is enough even when
+  # the ZTF stack runs on the GPU one. Run it from cron ahead of the night.
+  apptainer exec --pwd /app \
+    --bind "$BOOM_DIR/.env:/app/.env" \
+    --bind "$BOOM_DIR/config.yaml:/app/config.yaml" \
+    "$SIF_DIR/boom.sif" /app/mpcorb_ingest "$@" \
+    2>&1 | tee "$LOGS_DIR/mpcorb_ingest.log"
+  exit "${PIPESTATUS[0]}"
 fi
 
 # -----------------------------
@@ -295,9 +403,9 @@ if [ "$1" == "log" ]; then
     error_log="error"
   fi
 
-  if { [ "$survey" != "lsst" ] && [ "$survey" != "ztf" ] && [ "$survey" != "decam" ]; } || { [ -n "$error_log" ] && [ "$error_log" != "error" ]; }; then
+  if { [ "$survey" != "lsst" ] && [ "$survey" != "ztf" ] && [ "$survey" != "decam" ] && [ "$survey" != "winter" ]; } || { [ -n "$error_log" ] && [ "$error_log" != "error" ]; }; then
     echo -e "${RED}Error: Invalid survey name '$survey'.${END}"
-    echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam${END} ${YELLOW}(optional, defaults to lsst)${END}"
+    echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam | winter${END} ${YELLOW}(optional, defaults to lsst)${END}"
     echo -e "  ${BLUE}<error_log>:${END} ${GREEN}error${END} ${YELLOW}(optional, if provided, will grep for ERROR|WARN in the logs)${END}"
     exit 1
   fi
@@ -305,9 +413,9 @@ if [ "$1" == "log" ]; then
 
   echo -e "${BLUE}Displaying $survey scheduler ${error_log:+ERROR and WARN }log...${END}"
   if [ -n "$error_log" ]; then
-    grep -E "ERROR|WARN" "$log_file"
+    grep -E "ERROR|WARN" "$log_file" | colorize_log
   else
-    tail -f "$log_file"
+    tail -f "$log_file" | colorize_log
   fi
 
   exit 0
@@ -321,7 +429,7 @@ if [ "$1" == "error" ]; then
      log_file="$LOGS_DIR/${survey}_scheduler.log"
      if [ -f "$log_file" ]; then
        echo -e "${BLUE}Displaying $survey scheduler ERROR and WARN log...${END}"
-       grep -E "ERROR|WARN" "$log_file"
+       grep -E "ERROR|WARN" "$log_file" | colorize_log
      else
        echo -e "${YELLOW}WARNING${END}: Log file for $survey scheduler not found at $log_file"
      fi

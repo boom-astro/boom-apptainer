@@ -52,9 +52,8 @@ APPTAINER=false
 #              reuse them.
 #   bench    - assume services are already up (from a prior setup phase).
 #              Reset mutable state (drop ZTF alerts collections, restore
-#              ZTF_alerts_aux from the snapshot, recreate output topics, reset
-#              the consumer group offset), then start scheduler+consumer and
-#              wait for completion.
+#              ZTF_alerts_aux from the snapshot, truncate the output topics),
+#              then start scheduler+consumer and wait for completion.
 #   teardown - stop all running benchmark instances and exit.
 PHASE=full
 POSITIONAL_ARGS=()
@@ -491,7 +490,7 @@ if [ "$APPTAINER" == "true" ]; then
         consumer_log="$LOGS_DIR/consumer-$i.log"
     fi
     apptainer exec --pwd /app \
-      instance://benchmark_boom /app/kafka_consumer ztf 20250311 --programids public \
+      instance://benchmark_boom /app/kafka_consumer ztf --on 20250311 --programids public \
       > "$consumer_log" 2>&1 &
     pid=$!
     BG_PIDS+=($pid)
