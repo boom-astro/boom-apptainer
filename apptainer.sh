@@ -45,26 +45,32 @@ kill_process() {
   fi
 }
 
+mongod_alive() {
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null)
+  [ -n "$state" ] && [ "${state:0:1}" != "Z" ]
+}
+
 stop_mongo() {
-  if ! apptainer instance list 2>/dev/null | awk '{print $1}' | grep -xq "mongo"; then
+  local instance_pid mongod_pid
+  instance_pid=$(apptainer instance list 2>/dev/null | awk '$1 == "mongo" {print $2}')
+  if [ -z "$instance_pid" ]; then
     echo -e "${YELLOW}WARNING${END}: mongo instance is not running"
     return 0
   fi
 
+  # mongod closes its port when shutdown starts and apptainer force-kills at 10s, so wait on the process.
+  mongod_pid=$(pgrep -P "$instance_pid" mongod | head -1)
+  [ -z "$mongod_pid" ] && mongod_pid="$instance_pid"
+
   load_env
 
-  # `apptainer instance stop` force-kills after 10s, nowhere near enough to
-  # flush a large WiredTiger dirty cache, and the half-written data files then
-  # need journal recovery on the next start. Ask mongod to shut down instead
-  # and wait for it, however long that takes.
   echo -e "${BLUE}INFO${END}:    Stopping MongoDB, flushing the cache (this can take several minutes)"
   local output
   output=$(apptainer exec instance://mongo mongosh \
     "mongodb://$BOOM_DATABASE__USERNAME:$BOOM_DATABASE__PASSWORD@localhost:27017/admin?authSource=admin" \
     --quiet --eval 'db.adminCommand({shutdown: 1})' 2>&1)
 
-  # mongod drops the connection on its way down, so a socket error here is the
-  # expected outcome; only a rejected command means the shutdown never started.
   if grep -qiE "authentication failed|not authorized|unauthorized" <<< "$output"; then
     echo -e "${RED}ERROR${END}:   MongoDB refused the shutdown command:"
     echo "$output" | tail -3
@@ -72,7 +78,7 @@ stop_mongo() {
   fi
 
   local waited=0
-  while timeout 15 "$HEALTHCHECK_DIR/mongodb-healthcheck.sh" 0 > /dev/null 2>&1; do
+  while mongod_alive "$mongod_pid"; do
     if [ "$waited" -ge "$MONGO_SHUTDOWN_TIMEOUT" ]; then
       echo -e "${RED}ERROR${END}:   MongoDB still up after ${MONGO_SHUTDOWN_TIMEOUT}s. Leaving it running"
       echo -e "         rather than force-killing it; see $LOGS_DIR/mongodb/mongo.log."
@@ -268,8 +274,6 @@ fi
 # -----------------------------
 if [ "$1" == "restart" ]; then
   shift
-  # Restarting on top of a MongoDB that never shut down would defeat the clean
-  # stop, so a failed stop aborts here rather than starting anything.
   "$0" stop "$@" || exit $?
   "$0" start "$@"
   exit 0
