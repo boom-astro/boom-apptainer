@@ -491,9 +491,9 @@ ZTF enrichment derives solar system geometry from `MPC_orbits`, which is
 refreshed by a one-shot job — the Apptainer counterpart of the `mpcorb-ingest`
 Compose service. Run it from cron once a day, ahead of the observing night:
 ```bash
-./apptainer.sh mpcorb
+./apptainer.sh mpc
 ```
-Any extra argument is forwarded to the binary, e.g. `./apptainer.sh mpcorb --dry-run`.
+Any extra argument is forwarded to the binary, e.g. `./apptainer.sh mpc --dry-run`.
 
 The scheduler prints a variety of messages to your terminal, e.g.:
 

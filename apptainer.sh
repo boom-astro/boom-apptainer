@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to manage Boom using Apptainer.
-# $1 = action: build | start | stop | restart | health | benchmark | filters | mpcorb | backup | restore | log | error | show
+# $1 = action: build | start | stop | restart | health | benchmark | filters | mpc | backup | restore | log | error | show
 
 BOOM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # Retrieves the boom directory
 SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
@@ -119,9 +119,9 @@ colorize_log() {
 }
 
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
-  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] && [ "$1" != "mpcorb" ] \
+  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] && [ "$1" != "mpc" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
-  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpcorb|backup|restore|error|show} [args...]"
+  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpc|backup|restore|error|show} [args...]"
   exit 1
 fi
 
@@ -344,7 +344,7 @@ fi
 # -----------------------------
 # Refresh MPC orbital elements
 # -----------------------------
-if [ "$1" == "mpcorb" ]; then
+if [ "$1" == "mpc" ]; then
   shift
   mkdir -p "$LOGS_DIR"
   # A one-shot job, so it runs straight from the SIF instead of a boom instance.
