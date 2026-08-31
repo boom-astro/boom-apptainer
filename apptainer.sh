@@ -8,6 +8,7 @@ SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
 HEALTHCHECK_DIR="$SCRIPTS_DIR/healthcheck"
 LOGS_DIR="$BOOM_DIR/logs/boom"
 SIF_DIR="$BOOM_DIR/apptainer/sif"
+MONGO_SHUTDOWN_TIMEOUT=${MONGO_SHUTDOWN_TIMEOUT:-900}
 
 BLUE="\e[0;34m"
 RED="\e[31m"
@@ -42,6 +43,48 @@ kill_process() {
   else
     echo -e "${YELLOW}WARNING${END}: $name process is not running"
   fi
+}
+
+stop_mongo() {
+  if ! apptainer instance list 2>/dev/null | awk '{print $1}' | grep -xq "mongo"; then
+    echo -e "${YELLOW}WARNING${END}: mongo instance is not running"
+    return 0
+  fi
+
+  load_env
+
+  # `apptainer instance stop` force-kills after 10s, nowhere near enough to
+  # flush a large WiredTiger dirty cache, and the half-written data files then
+  # need journal recovery on the next start. Ask mongod to shut down instead
+  # and wait for it, however long that takes.
+  echo -e "${BLUE}INFO${END}:    Stopping MongoDB, flushing the cache (this can take several minutes)"
+  local output
+  output=$(apptainer exec instance://mongo mongosh \
+    "mongodb://$BOOM_DATABASE__USERNAME:$BOOM_DATABASE__PASSWORD@localhost:27017/admin?authSource=admin" \
+    --quiet --eval 'db.adminCommand({shutdown: 1})' 2>&1)
+
+  # mongod drops the connection on its way down, so a socket error here is the
+  # expected outcome; only a rejected command means the shutdown never started.
+  if grep -qiE "authentication failed|not authorized|unauthorized" <<< "$output"; then
+    echo -e "${RED}ERROR${END}:   MongoDB refused the shutdown command:"
+    echo "$output" | tail -3
+    return 1
+  fi
+
+  local waited=0
+  while timeout 15 "$HEALTHCHECK_DIR/mongodb-healthcheck.sh" 0 > /dev/null 2>&1; do
+    if [ "$waited" -ge "$MONGO_SHUTDOWN_TIMEOUT" ]; then
+      echo -e "${RED}ERROR${END}:   MongoDB still up after ${MONGO_SHUTDOWN_TIMEOUT}s. Leaving it running"
+      echo -e "         rather than force-killing it; see $LOGS_DIR/mongodb/mongo.log."
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+    [ $((waited % 60)) -eq 0 ] && echo -e "${BLUE}INFO${END}:    still flushing (${waited}s)"
+  done
+
+  apptainer instance stop mongo > /dev/null 2>&1
+  echo -e "${GREEN}MongoDB shut down cleanly after ${waited}s${END}"
 }
 
 stop_service() {
@@ -213,10 +256,11 @@ if [ "$1" == "stop" ]; then
   if stop_service "kafka" "$target"; then
     apptainer instance stop kafka
   fi
+  mongo_status=0
   if stop_service "mongo" "$target"; then
-    apptainer instance stop mongo
+    stop_mongo || mongo_status=$?
   fi
-  exit 0
+  exit "$mongo_status"
 fi
 
 # -----------------------------
@@ -224,7 +268,9 @@ fi
 # -----------------------------
 if [ "$1" == "restart" ]; then
   shift
-  "$0" stop "$@"
+  # Restarting on top of a MongoDB that never shut down would defeat the clean
+  # stop, so a failed stop aborts here rather than starting anything.
+  "$0" stop "$@" || exit $?
   "$0" start "$@"
   exit 0
 fi
