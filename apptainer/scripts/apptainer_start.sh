@@ -189,9 +189,7 @@ if [ "$2" = "grafana" ]; then
     echo && echo "$(current_datetime) - Starting Grafana"
     mkdir -p "$PERSISTENT_DIR/grafana"
     mkdir -p "$LOGS_DIR/grafana"
-    # The datasources file is bound over the checked-in one so the backends are
-    # reached on localhost instead of the Docker service names, and the
-    # dashboards are bound on top of the data directory (bind order matters).
+    # Dashboards are bound on top of the data directory, so bind order matters.
     apptainer instance start \
       --env-file .env \
       --bind "$PERSISTENT_DIR/grafana:/var/lib/grafana" \
@@ -266,8 +264,7 @@ fi
 # -----------------------------
 if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "scheduler" "$2"; then
   survey=$3
-  # Resolve BOOM image variant (CPU vs GPU) based on BOOM_GPU__ENABLED.
-  # Only ZTF actually uses the GPU; LSST/DECam/WINTER always run on CPU.
+  # Only ZTF uses the GPU; LSST/DECam/WINTER always run on CPU.
   BOOM_SIF="boom.sif"
   NV_FLAG=""
   if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$survey" = "ztf" ]; then

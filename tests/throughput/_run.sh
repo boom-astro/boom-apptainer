@@ -162,7 +162,7 @@ if [ "$APPTAINER" == "true" ]; then
 
   echo "$(current_datetime) - Initializing MongoDB with test data"
   apptainer exec \
-      --bind "$BOOM_REPO_ROOT/data/alerts/kowalski.NED.json.gz:/kowalski.NED.json.gz" \
+      --bind "$BOOM_REPO_ROOT/data/alerts/BOOM.NED.json.gz:/BOOM.NED.json.gz" \
       --bind "$BOOM_REPO_ROOT/data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz:/boom_throughput.ZTF_alerts_aux.dump.gz" \
       --bind "$TESTS_DIR/throughput/apptainer_mongo-init.sh:/mongo-init.sh" \
       --bind "$TESTS_DIR/throughput/cats150.filter.json:/cats150.filter.json" \
@@ -314,10 +314,7 @@ if [ "${LOW_STORAGE:-}" = "true" ]; then
     rm -rf ./data/alerts/boom_throughput.ZTF_alerts_aux.dump.gz || true
 fi
 
-# If GPU support is enabled, we wait until we have confirmed that GPU inference is working.
-# On some architectures (recent GPUs, mostly) we may have to wait for CUDA to compile
-# some kernels and populate the cache before we see successful GPU inference,
-# so we wait until we see logs indicating that the ONNX CUDA warmup has completed.
+# Recent GPUs compile CUDA kernels on first use, so inference is not ready at startup.
 if [ "${BOOM_GPU__ENABLED:-false}" = "true" ] && [ "$PLATFORM" = "linux" ]; then
     echo "$(current_datetime) - GPU support is enabled; waiting for GPUs to be inference-ready"
     START_TIME=$(date +%s)

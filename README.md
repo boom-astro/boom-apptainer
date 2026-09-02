@@ -487,9 +487,7 @@ the survey, either as two tokens or as `--from=DATE`/`--on=DATE`, and a bare
 ./apptainer.sh stop consumer ztf --on 20250311 public
 ```
 
-ZTF enrichment derives solar system geometry from `MPC_orbits`, which is
-refreshed by a one-shot job — the Apptainer counterpart of the `mpcorb-ingest`
-Compose service. Run it from cron once a day, ahead of the observing night:
+Forces the refresh of `MPC_orbits`; the ZTF scheduler already does it daily from `minorplanetcenter.net`.
 ```bash
 ./apptainer.sh mpc
 ```

@@ -18,10 +18,7 @@ import pandas as pd
 import yaml
 from astropy.time import Time
 
-# Match an ISO-8601 timestamp like `2026-05-07T18:00:00.000000Z` anywhere in
-# the line. Boom log lines may now be prefixed with `trace_id=<hex> span_id=<hex>`
-# from the OTel formatter when an active span is in scope, so positional
-# splitting (`line.split()[2]`) is no longer reliable.
+# Matched anywhere in the line: the OTel formatter may prefix trace_id/span_id.
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
 
 
@@ -215,9 +212,6 @@ subprocess.run(cmd, check=True)
 # Now analyze the logs and raise an error if we're too slow
 t1_b, t2_b = None, None
 
-# To calculate BOOM wall time, take:
-# - Start: timestamp of the first message received by the consumer
-# - End: last timestamp in the scheduler log
 with open(f"{logs_dir}/consumer.log") as f:
     lines = f.readlines()
     for line in lines:

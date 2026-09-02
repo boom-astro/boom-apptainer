@@ -211,8 +211,7 @@ if [ "$1" == "stop" ]; then
       exit 0
     fi
     if apptainer instance list | grep -q "boom "; then
-      # If a generic "boom" instance is running, stop only that one
-      # and exit early to avoid stopping survey-specific instances.
+      # Exit early so the survey-specific instances are left alone.
       apptainer instance stop "boom"
       exit 0
     fi
@@ -347,9 +346,7 @@ fi
 if [ "$1" == "mpc" ]; then
   shift
   mkdir -p "$LOGS_DIR"
-  # A one-shot job, so it runs straight from the SIF instead of a boom instance.
-  # It only needs Mongo and the network, so the CPU image is enough even when
-  # the ZTF stack runs on the GPU one. Run it from cron ahead of the night.
+  # Only needs Mongo and the network, so the CPU image serves the GPU stack too.
   apptainer exec --pwd /app \
     --bind "$BOOM_DIR/.env:/app/.env" \
     --bind "$BOOM_DIR/config.yaml:/app/config.yaml" \
