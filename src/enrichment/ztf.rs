@@ -796,11 +796,15 @@ impl EnrichmentWorker for ZtfEnrichmentWorker {
                 let source_refs: Vec<&SourceData> = sources.iter().collect();
                 let pso_config = villar_pso::PsoConfig::default();
 
-                let batch_result = GpuBatchData::new(gpu_ctx, &source_refs);
+                // Lock across upload + fit: both submit to the same stream.
+                let batch_result = {
+                    let ctx = gpu_ctx.lock().unwrap();
+                    GpuBatchData::new(&ctx, &source_refs).and_then(|batch| {
+                        ctx.batch_pso_multi_seed(&batch, &source_refs, &pso_config)
+                    })
+                };
 
-                match batch_result.and_then(|batch| {
-                    gpu_ctx.batch_pso_multi_seed(&batch, &source_refs, &pso_config)
-                }) {
+                match batch_result {
                     Ok(results) => {
                         for (result, candid) in results.iter().zip(candids) {
                             let mut set_doc = doc! {
@@ -1064,6 +1068,8 @@ impl ZtfEnrichmentWorker {
         work_items: &[AlertWork],
     ) -> Result<Vec<Option<ZtfAlertClassifications>>, EnrichmentWorkerError> {
         if self.gpu_enabled {
+            // May have migrated to another runtime thread since the last batch.
+            models.bind_device()?;
             return self.classify_gpu_batch(models, work_items);
         }
 
