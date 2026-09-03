@@ -28,6 +28,14 @@ load_env() {
   fi
 }
 
+resolve_config_file() {
+  # Relative BOOM_CONFIG_PATH resolves against $BOOM_DIR.
+  CONFIG_FILE="${BOOM_CONFIG_PATH:-config.yaml}"
+  if [[ "$CONFIG_FILE" != /* ]]; then
+    CONFIG_FILE="$BOOM_DIR/$CONFIG_FILE"
+  fi
+}
+
 kill_process() {
   local process="$1"
   local name="$2"
@@ -346,10 +354,12 @@ fi
 if [ "$1" == "mpc" ]; then
   shift
   mkdir -p "$LOGS_DIR"
+  load_env
+  resolve_config_file
   # Only needs Mongo and the network, so the CPU image serves the GPU stack too.
   apptainer exec --pwd /app \
     --bind "$BOOM_DIR/.env:/app/.env" \
-    --bind "$BOOM_DIR/config.yaml:/app/config.yaml" \
+    --bind "$CONFIG_FILE:/app/config.yaml" \
     "$SIF_DIR/boom.sif" /app/mpcorb_ingest "$@" \
     2>&1 | tee "$LOGS_DIR/mpcorb_ingest.log"
   exit "${PIPESTATUS[0]}"

@@ -464,6 +464,12 @@ docker compose exec scheduler-ztf /bin/bash
 
 ### Using Apptainer
 
+`BOOM_CONFIG_PATH` in `.env` selects the config bound into every instance, as it does for Docker Compose. Relative paths resolve against the repository root; unset, it falls back to `./config.yaml`:
+```bash
+# .env
+BOOM_CONFIG_PATH=./config/prod/umn/config.yaml
+```
+
 To run the consumer and the scheduler with Apptainer, you can open a shell in the `boom` instance with:
 ```bash
 apptainer shell --pwd /app instance://boom

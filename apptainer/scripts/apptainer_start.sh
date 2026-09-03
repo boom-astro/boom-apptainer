@@ -32,8 +32,21 @@ LOGS_DIR="$BOOM_DIR/logs/boom"
 PERSISTENT_DIR="$BOOM_DIR/apptainer/persistent"
 SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
 HEALTHCHECK_DIR="$SCRIPTS_DIR/healthcheck"
-CONFIG_FILE="$BOOM_DIR/config.yaml"
 SIF_DIR="$BOOM_DIR/apptainer/sif"
+
+# -----------------------------
+# Load environment variables from .env file
+# -----------------------------
+# Sourced before CONFIG_FILE so BOOM_CONFIG_PATH is visible.
+set -a
+source "$BOOM_DIR/.env"
+set +a
+
+# Relative BOOM_CONFIG_PATH resolves against $BOOM_DIR.
+CONFIG_FILE="${BOOM_CONFIG_PATH:-config.yaml}"
+if [[ "$CONFIG_FILE" != /* ]]; then
+  CONFIG_FILE="$BOOM_DIR/$CONFIG_FILE"
+fi
 
 YELLOW="\e[33m"
 GREEN="\e[32m"
@@ -88,13 +101,6 @@ if [ "$2" = "dev" ]; then
   echo -e "${GREEN}Boom dev instance started${END}"
   exit 0
 fi
-
-# -----------------------------
-# Load environment variables from .env file
-# -----------------------------
-set -a
-source .env
-set +a
 
 # -----------------------------
 # MongoDB
