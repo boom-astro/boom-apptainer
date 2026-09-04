@@ -47,18 +47,17 @@ fn env_truthy(value: &str) -> bool {
 /// ORT's default `kNextPowerOfTwo` never reuses the freed activation chunk at
 /// batch 900/1000 on an A40, taking a fresh 1 GiB region every batch.
 /// `kSameAsRequested` extends by the exact request, which fits the next batch
-/// because `classify` zero-pads to a fixed shape. Unset keeps ORT's default.
-/// To re-measure, set ORT's log level to Verbose *and* verbosity to 1 — the
-/// arena's "Extending BFC arena for ..." lines go through VLOG.
+/// because `classify` zero-pads to a fixed shape. Unset or empty keeps ORT's
+/// default. To re-measure, set ORT's log level to Verbose *and* verbosity to
+/// 1 — the arena's "Extending BFC arena for ..." lines go through VLOG.
 #[cfg(target_os = "linux")]
 fn arena_extend_strategy_from_env() -> Option<ort::ep::ArenaExtendStrategy> {
-    match env::var("BOOM_ORT_ARENA_STRATEGY")
-        .ok()?
-        .trim()
-        .to_ascii_lowercase()
-        .replace('-', "_")
-        .as_str()
-    {
+    let raw = env::var("BOOM_ORT_ARENA_STRATEGY").ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    match raw.to_ascii_lowercase().replace('-', "_").as_str() {
         "same_as_requested" => Some(ort::ep::ArenaExtendStrategy::SameAsRequested),
         "next_power_of_two" => Some(ort::ep::ArenaExtendStrategy::NextPowerOfTwo),
         other => {

@@ -40,10 +40,11 @@ pub struct SharedModels {
     pub acai_b: Mutex<AcaiModel>,
     pub btsbot: Mutex<BtsBotModel>,
     /// Villar-PSO GPU context bound to this device. `None` when running
-    /// without the `gpu` feature. `Mutex` because workers sharing this set
-    /// would otherwise submit to its single CUDA stream concurrently.
+    /// without the `gpu` feature. No mutex: it is an id plus a stream pointer
+    /// with `&self` methods, per-call buffers, and stream enqueue is
+    /// thread-safe, so workers sharing this set may use it concurrently.
     #[cfg(feature = "gpu")]
-    pub gpu_ctx: Option<Mutex<GpuContext>>,
+    pub gpu_ctx: Option<GpuContext>,
     /// CUDA stream shared with the ORT sessions above. Must be dropped last
     /// — see struct-level docstring.
     #[cfg(all(feature = "gpu", target_os = "linux"))]
@@ -121,23 +122,21 @@ impl SharedModels {
 
         // Build the villar-pso GpuContext on the same device + stream.
         #[cfg(feature = "gpu")]
-        let gpu_ctx: Option<Mutex<GpuContext>> = match device_id {
+        let gpu_ctx: Option<GpuContext> = match device_id {
             #[cfg(target_os = "linux")]
-            Some(id) => Some(Mutex::new(GpuContext::new(id, stream_ptr).map_err(
-                |e| {
-                    ModelError::Ort(ort::Error::new(format!(
-                        "villar-pso GPU init failed for device {}: {}",
-                        id, e
-                    )))
-                },
-            )?)),
-            #[cfg(target_os = "macos")]
-            Some(id) => Some(Mutex::new(GpuContext::new(id).map_err(|e| {
+            Some(id) => Some(GpuContext::new(id, stream_ptr).map_err(|e| {
                 ModelError::Ort(ort::Error::new(format!(
                     "villar-pso GPU init failed for device {}: {}",
                     id, e
                 )))
-            })?)),
+            })?),
+            #[cfg(target_os = "macos")]
+            Some(id) => Some(GpuContext::new(id).map_err(|e| {
+                ModelError::Ort(ort::Error::new(format!(
+                    "villar-pso GPU init failed for device {}: {}",
+                    id, e
+                )))
+            })?),
             None => None,
         };
 
@@ -167,7 +166,7 @@ impl SharedModels {
     pub fn bind_device(&self) -> Result<(), ModelError> {
         #[cfg(all(feature = "gpu", target_os = "linux"))]
         if let Some(ctx) = self.gpu_ctx.as_ref() {
-            ctx.lock().unwrap().set_device().map_err(|e| {
+            ctx.set_device().map_err(|e| {
                 ModelError::Ort(ort::Error::new(format!(
                     "failed to bind thread to CUDA device: {}",
                     e
