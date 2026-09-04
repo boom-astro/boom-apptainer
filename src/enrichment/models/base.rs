@@ -42,35 +42,6 @@ fn env_truthy(value: &str) -> bool {
     )
 }
 
-/// BFC arena extension strategy, from `BOOM_ORT_ARENA_STRATEGY`.
-///
-/// ORT's default `kNextPowerOfTwo` never reuses the freed activation chunk at
-/// batch 900/1000 on an A40, taking a fresh 1 GiB region every batch.
-/// `kSameAsRequested` extends by the exact request, which fits the next batch
-/// because `classify` zero-pads to a fixed shape. Unset or empty keeps ORT's
-/// default. To re-measure, set ORT's log level to Verbose *and* verbosity to
-/// 1 — the arena's "Extending BFC arena for ..." lines go through VLOG.
-#[cfg(target_os = "linux")]
-fn arena_extend_strategy_from_env() -> Option<ort::ep::ArenaExtendStrategy> {
-    let raw = env::var("BOOM_ORT_ARENA_STRATEGY").ok()?;
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    match raw.to_ascii_lowercase().replace('-', "_").as_str() {
-        "same_as_requested" => Some(ort::ep::ArenaExtendStrategy::SameAsRequested),
-        "next_power_of_two" => Some(ort::ep::ArenaExtendStrategy::NextPowerOfTwo),
-        other => {
-            tracing::warn!(
-                value = other,
-                "unrecognized BOOM_ORT_ARENA_STRATEGY; expected \
-                 same_as_requested|next_power_of_two. Using the ONNX Runtime default."
-            );
-            None
-        }
-    }
-}
-
 /// Load an ONNX model on a specific device. On Linux+CUDA, `cuda_stream` (a
 /// `cudaStream_t` cast to `*mut c_void`) lets the session share its compute
 /// stream with other CUDA work — pass `std::ptr::null_mut()` to let ORT
@@ -113,11 +84,11 @@ pub fn load_model_on_device(
         let cuda_ep = {
             let mut ep = ort::ep::CUDAExecutionProvider::default()
                 .with_device_id(dev)
-                .with_conv_max_workspace(false);
-            if let Some(strategy) = arena_extend_strategy_from_env() {
-                tracing::info!(?strategy, "overriding BFC arena extend strategy");
-                ep = ep.with_arena_extend_strategy(strategy);
-            }
+                .with_conv_max_workspace(false)
+                // ORT's default grows the arena every batch at 900+ (35 GiB on
+                // an A40). Exact-size extents fit the next batch only because
+                // callers pad to a fixed shape; dynamic shapes would regress.
+                .with_arena_extend_strategy(ort::ep::ArenaExtendStrategy::SameAsRequested);
             if !cuda_stream.is_null() {
                 // Safety: caller guarantees the stream is valid for `dev`
                 // and outlives the session (see fn-level safety comment).

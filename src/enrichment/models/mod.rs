@@ -58,6 +58,10 @@ impl std::fmt::Debug for SharedModels {
 }
 
 impl SharedModels {
+    /// Load all ONNX models, optionally on a specific CUDA device.
+    ///
+    /// On Linux+`gpu` every ORT session and the villar `GpuContext` share one
+    /// stream for the device. Callers must `bind_device` before using these.
     pub fn load(device_id: Option<i32>) -> Result<Arc<Self>, ModelError> {
         info!(?device_id, "loading shared ONNX models");
 
