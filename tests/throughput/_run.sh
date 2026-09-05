@@ -649,12 +649,10 @@ echo "$(current_datetime) - All $EXPECTED_ALERTS alerts filtered in $FILTERING_T
 echo "$(current_datetime) - All alerts ingested, classified, and filtered"
 echo "$(current_datetime) - Reading from Kafka output topic"
 if [ "$APPTAINER" == "true" ]; then
-  python "$TESTS_DIR/throughput/read-kafka-output.py" --server "localhost:$KAFKA_PORT"
+  "${PYTHON_BIN:-python}" "$TESTS_DIR/throughput/read-kafka-output.py" --server "localhost:$KAFKA_PORT"
 else
-  python "$TESTS_DIR/throughput/read-kafka-output.py"
+  "${PYTHON_BIN:-python}" "$TESTS_DIR/throughput/read-kafka-output.py"
 fi
-# TODO: check for uv implementation
-# uv run "$TESTS_DIR/throughput/read-kafka-output.py"
 
 # -----------------------------
 # Export MongoDB collection stats to JSON for analysis
