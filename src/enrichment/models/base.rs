@@ -82,19 +82,13 @@ pub fn load_model_on_device(
 
         #[cfg(target_os = "linux")]
         let cuda_ep = {
-            // `with_conv_max_workspace(false)` caps the cuDNN conv
-            // algorithm-search workspace at 32 MB, shrinking the per-shape
-            // scratch buffers the dynamic batch dimension would otherwise grab.
-            //
-            // NOTE: `arena_extend_strategy = SameAsRequested` was tried here
-            // and removed. With the dynamic-batch models its exact-sized
-            // extensions wreck BFC arena reuse, so GPU memory climbs
-            // monotonically every batch and OOMs. The default `kNextPowerOfTwo`
-            // allocates reusable power-of-two blocks and the arena stabilizes.
-            // .with_arena_extend_strategy(ort::ep::ArenaExtendStrategy::SameAsRequested)
             let mut ep = ort::ep::CUDAExecutionProvider::default()
                 .with_device_id(dev)
-                .with_conv_max_workspace(false);
+                .with_conv_max_workspace(false)
+                // ORT's default grows the arena every batch at 900+ (35 GiB on
+                // an A40). Exact-size extents fit the next batch only because
+                // callers pad to a fixed shape; dynamic shapes would regress.
+                .with_arena_extend_strategy(ort::ep::ArenaExtendStrategy::SameAsRequested);
             if !cuda_stream.is_null() {
                 // Safety: caller guarantees the stream is valid for `dev`
                 // and outlives the session (see fn-level safety comment).

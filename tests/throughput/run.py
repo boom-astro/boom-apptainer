@@ -5,6 +5,7 @@
 #     "pyyaml",
 #     "pandas>2",
 #     "astropy",
+#     "confluent-kafka",
 # ]
 # ///
 
@@ -13,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 
 import pandas as pd
@@ -225,6 +227,10 @@ os.environ["BENCHMARK_REDIS_PORT"] = str(ports["redis"])
 os.environ["BENCHMARK_KAFKA_PORT"] = str(ports["kafka"])
 os.environ["TIMEOUT_SECS"] = str(args.timeout)
 os.environ["BOOM_CUTOUTS_STORAGE__TYPE"] = args.cutouts_storage_type
+# `_run.sh` runs read-kafka-output.py, whose confluent-kafka dependency is
+# declared above. Under `uv run` that lives in an ephemeral venv, so hand the
+# script this interpreter rather than letting it guess from PATH.
+os.environ["PYTHON_BIN"] = sys.executable
 cmd = [
     "bash",
     os.path.join(args.boom_repo_dir, "tests", "throughput", "_run.sh"),
