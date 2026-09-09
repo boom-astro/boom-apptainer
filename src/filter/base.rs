@@ -245,7 +245,7 @@ pub async fn create_producer(
         // Uncomment the following to get logs from kafka (RUST_LOG doesn't work):
         // .set("debug", "broker,topic,msg")
         .set("bootstrap.servers", &kafka_producer_config.server)
-        .set("message.timeout.ms", "5000")
+        .set("message.timeout.ms", "120000")
         .set("batch.size", "1048576")
         .set("linger.ms", "50")
         .set("acks", "1")

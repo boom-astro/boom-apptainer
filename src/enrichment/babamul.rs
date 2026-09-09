@@ -436,7 +436,7 @@ impl Babamul {
                 // Uncomment the following to get logs from kafka (RUST_LOG doesn't work):
                 // .set("debug", "broker,topic,msg")
                 .set("bootstrap.servers", &kafka_producer_host)
-                .set("message.timeout.ms", "5000")
+                .set("message.timeout.ms", "120000")
                 // generally, lower batch size means lower latency but also lower throughput
                 // here we use 1MB batch size to optimize for throughput since the enriched alerts can be
                 // quite large and we want to avoid splitting them across multiple batches if possible
