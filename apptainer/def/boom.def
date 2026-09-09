@@ -56,6 +56,8 @@ From: rust:1.93.1-slim-trixie
     cp /app/target/release/migrate_fp_flux /app/migrate_fp_flux
     cp /app/target/release/migrate_snr /app/migrate_snr
     cp /app/target/release/reprocess_crossmatch /app/reprocess_crossmatch
+    cp /app/target/release/prepare_catalog /app/prepare_catalog
+    cp /app/target/release/repair_photometry_ordering /app/repair_photometry_ordering
     cp /app/target/release/mpcorb_ingest /app/mpcorb_ingest
 
     # Cleanup: remove build deps and artifacts to reduce image size
