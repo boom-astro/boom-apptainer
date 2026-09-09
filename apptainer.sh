@@ -129,7 +129,7 @@ colorize_log() {
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
   && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] && [ "$1" != "mpc" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
-  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpc|backup|restore|error|show} [args...]"
+  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpc|backup|restore|log|error|show} [args...]"
   exit 1
 fi
 
@@ -402,25 +402,43 @@ fi
 # Display log
 # -----------------------------
 if [ "$1" == "log" ]; then
-  survey="${2:-lsst}"
-  error_log=$3
+  shift
+  survey=""
+  error_log=""
+  lines=""
 
-  if [ "$survey" == "error" ]; then
-    survey="lsst"
-    error_log="error"
-  fi
+  # Arguments are recognized by their shape, so they can be given in any order.
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^(lsst|ztf|decam|winter)$ ]]; then
+      survey="$arg"
+    elif [ "$arg" == "error" ]; then
+      error_log="error"
+    elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+      lines="$arg"
+    else
+      echo -e "${RED}Error: Invalid argument '$arg'.${END}"
+      echo -e "Usage: ${BLUE}$0 log [survey] [error] [lines]${END}"
+      echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam | winter${END} ${YELLOW}(optional, defaults to lsst)${END}"
+      echo -e "  ${BLUE}<error>:${END} ${GREEN}error${END} ${YELLOW}(optional, if provided, will grep for ERROR|WARN in the logs)${END}"
+      echo -e "  ${BLUE}<lines>:${END} ${GREEN}100${END} ${YELLOW}(optional, displays the first <lines> lines instead of following the log)${END}"
+      exit 1
+    fi
+  done
 
-  if { [ "$survey" != "lsst" ] && [ "$survey" != "ztf" ] && [ "$survey" != "decam" ] && [ "$survey" != "winter" ]; } || { [ -n "$error_log" ] && [ "$error_log" != "error" ]; }; then
-    echo -e "${RED}Error: Invalid survey name '$survey'.${END}"
-    echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam | winter${END} ${YELLOW}(optional, defaults to lsst)${END}"
-    echo -e "  ${BLUE}<error_log>:${END} ${GREEN}error${END} ${YELLOW}(optional, if provided, will grep for ERROR|WARN in the logs)${END}"
+  survey="${survey:-lsst}"
+  log_file="$LOGS_DIR/${survey}_scheduler.log"
+  if [ ! -f "$log_file" ]; then
+    echo -e "${RED}Error: Log file for $survey scheduler not found at $log_file${END}"
     exit 1
   fi
-  log_file="$LOGS_DIR/${survey}_scheduler.log"
 
-  echo -e "${BLUE}Displaying $survey scheduler ${error_log:+ERROR and WARN }log...${END}"
-  if [ -n "$error_log" ]; then
+  echo -e "${BLUE}Displaying $survey scheduler ${error_log:+ERROR and WARN }log${lines:+ (first $lines lines)}...${END}"
+  if [ -n "$error_log" ] && [ -n "$lines" ]; then
+    grep -E "ERROR|WARN" "$log_file" | head -n "$lines" | colorize_log
+  elif [ -n "$error_log" ]; then
     grep -E "ERROR|WARN" "$log_file" | colorize_log
+  elif [ -n "$lines" ]; then
+    head -n "$lines" "$log_file" | colorize_log
   else
     tail -f "$log_file" | colorize_log
   fi
