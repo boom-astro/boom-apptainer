@@ -23,8 +23,8 @@ From: rust:1.93.1-slim-trixie
     apt-get update && \
     apt-get install -y --no-install-recommends \
       curl gcc g++ libhdf5-dev libclang-dev perl \
-      make libsasl2-dev pkg-config \
-      libsasl2-2 ca-certificates \
+      make libsasl2-dev libcfitsio-dev pkg-config \
+      libsasl2-2 libcfitsio10t64 ca-certificates \
       openjdk-25-jre-headless tar xz-utils \
       python3 python3-venv && \
     apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -59,9 +59,10 @@ From: rust:1.93.1-slim-trixie
     cp /app/target/release/prepare_catalog /app/prepare_catalog
     cp /app/target/release/repair_photometry_ordering /app/repair_photometry_ordering
     cp /app/target/release/mpcorb_ingest /app/mpcorb_ingest
+    cp /app/target/release/backfill_hpx /app/backfill_hpx
 
     # Cleanup: remove build deps and artifacts to reduce image size
-    apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev pkg-config python3-venv
+    apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev libcfitsio-dev pkg-config python3-venv
     apt-get autoremove -y
     apt-get clean
     rm -rf /app/target /app/src /app/apache-avro-macros /app/Cargo.toml /app/Cargo.lock

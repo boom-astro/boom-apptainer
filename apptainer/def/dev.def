@@ -17,7 +17,7 @@ From: rust:1.93.1-slim-trixie
     apt-get update && \
     apt-get install -y --no-install-recommends \
       curl gcc g++ libhdf5-dev libclang-dev perl \
-      make libsasl2-dev pkg-config \
+      make libsasl2-dev libcfitsio-dev pkg-config \
       libsasl2-2 ca-certificates \
       openjdk-25-jre-headless tar xz-utils \
       python3 python3-venv && \

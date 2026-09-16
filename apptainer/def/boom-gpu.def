@@ -23,7 +23,7 @@ Stage: build
     apt-get install -y --no-install-recommends \
       ca-certificates curl bash tar xz-utils \
       gcc g++ libhdf5-dev libclang-dev perl make \
-      libsasl2-dev libsasl2-2 pkg-config \
+      libsasl2-dev libsasl2-2 libcfitsio-dev pkg-config \
       python3 python3-venv && \
     apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -66,6 +66,7 @@ Stage: build
        /app/target/release/prepare_catalog \
        /app/target/release/repair_photometry_ordering \
        /app/target/release/mpcorb_ingest \
+       /app/target/release/backfill_hpx \
        /app/bin/
 
 Bootstrap: docker
@@ -93,6 +94,7 @@ Stage: final
     /app/bin/prepare_catalog /app/prepare_catalog
     /app/bin/repair_photometry_ordering /app/repair_photometry_ordering
     /app/bin/mpcorb_ingest /app/mpcorb_ingest
+    /app/bin/backfill_hpx /app/backfill_hpx
     /opt/ort /opt/
     /opt/kafka /opt/
 
@@ -100,5 +102,5 @@ Stage: final
     export DEBIAN_FRONTEND=noninteractive
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      ca-certificates curl bash libsasl2-2 default-jre-headless && \
+      ca-certificates curl bash libsasl2-2 libcfitsio10t64 default-jre-headless && \
     apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
