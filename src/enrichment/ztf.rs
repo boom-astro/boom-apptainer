@@ -10,8 +10,9 @@ use crate::utils::cutouts::{AlertCutout, CutoutStorage};
 use crate::utils::db::mongify;
 use crate::utils::enums::Survey;
 use crate::utils::lightcurves::{
-    analyze_photometry, prepare_photometry, ActivityMetrics, AllBandsProperties, Band,
-    DetectionHistory, Outburst, PerBandProperties, PhotometryMag, ZTF_ZP,
+    analyze_photometry, prepare_photometry, summarise_detections, ActivityMetrics,
+    AllBandsProperties, Band, DetectionHistory, EpisodeHistory, Outburst, PerBandProperties,
+    PhotometryMag, EPISODE_GAP_DAYS, ZTF_ZP,
 };
 use crate::utils::mpcorb::{elements_from_document, normalize_ztf_ssnamenr, ORBITS_COLLECTION};
 use crate::utils::outburst::{Point, MAX_SEPARATION_ARCSEC};
@@ -552,6 +553,9 @@ pub struct ZtfAlertProperties {
     /// `None` on alerts enriched before this field existed.
     #[serde(default)]
     pub detection_history: Option<DetectionHistory>,
+    /// Detection episodes, for finding sources that outburst more than once.
+    /// `None` on alerts enriched before this field existed.
+    pub episode_history: Option<EpisodeHistory>,
 }
 
 /// ZTF alert ML classifier scores
@@ -591,8 +595,7 @@ pub struct ZtfEnrichmentWorker {
     models: Arc<SharedModels>,
     babamul: Option<Babamul>,
     gpu_enabled: bool,
-    /// Alerts per batch — also the fixed ONNX inference shape (see
-    /// [`EnrichmentWorkerConfig::batch_size`] in `conf.rs`).
+    /// Alerts per batch; also the fixed ONNX input shape. See [`EnrichmentWorkerConfig::batch_size`].
     batch_size: usize,
 }
 
@@ -968,11 +971,20 @@ impl ZtfEnrichmentWorker {
 
         // An empty catalogue looks like every object missing, so say which it is.
         if by_key.is_empty() {
-            warn!(
-                "no elements found in {} for any of {} objects in this batch",
-                ORBITS_COLLECTION,
-                keys.len()
-            );
+            let catalogue_empty = self
+                .mpc_orbits
+                .estimated_document_count()
+                .await
+                .is_ok_and(|count| count == 0);
+            if catalogue_empty {
+                warn!("{} is empty, enriching without geometry", ORBITS_COLLECTION);
+            } else {
+                debug!(
+                    "no elements found in {} for any of {} objects in this batch",
+                    ORBITS_COLLECTION,
+                    keys.len()
+                );
+            }
         }
 
         key_by_name
@@ -1237,12 +1249,13 @@ impl ZtfEnrichmentWorker {
 
         // Per-object detection history for history-aware filters, from the full
         // accumulated light curve (positive/negative by psfFlux sign).
-        let detection_history = DetectionHistory::from_points(
+        let (detection_history, episode_history) = summarise_detections(
             alert
                 .prv_candidates
                 .iter()
                 .map(|p| (p.jd, p.flux.filter(|f| !f.is_nan()).map(|f| f < 0.0))),
             candidate.jd,
+            EPISODE_GAP_DAYS,
         );
 
         Ok((
@@ -1256,6 +1269,7 @@ impl ZtfEnrichmentWorker {
                 sso: Some(sso),
                 activity: Some(activity),
                 detection_history: Some(detection_history),
+                episode_history: Some(episode_history),
             },
             all_bands_properties,
             programid,
@@ -1271,6 +1285,7 @@ impl ZtfEnrichmentWorker {
         work_items: &[AlertWork],
     ) -> Result<Vec<Option<ZtfAlertClassifications>>, EnrichmentWorkerError> {
         if self.gpu_enabled {
+            models.bind_device()?;
             return self.classify_gpu_batch(models, work_items);
         }
 
