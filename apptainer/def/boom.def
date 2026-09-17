@@ -60,6 +60,7 @@ From: rust:1.93.1-slim-trixie
     cp /app/target/release/repair_photometry_ordering /app/repair_photometry_ordering
     cp /app/target/release/mpcorb_ingest /app/mpcorb_ingest
     cp /app/target/release/backfill_hpx /app/backfill_hpx
+    cp /app/target/release/enrich_reprocess /app/enrich_reprocess
 
     # Cleanup: remove build deps and artifacts to reduce image size
     apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev libcfitsio-dev pkg-config python3-venv
