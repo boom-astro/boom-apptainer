@@ -195,6 +195,9 @@ if [ "$APPTAINER" == "true" ]; then
   # Start Boom
   # -----------------------------
   echo && echo "$(current_datetime) - Starting BOOM instance"
+  # Exported, not --env: instance start does not forward it to apptainer exec.
+  export BOOM_GPU__ENABLED="${BOOM_GPU__ENABLED:-false}"
+  export BOOM_GPU__DEVICE_IDS="${BOOM_GPU__DEVICE_IDS:-0}"
   BOOM_SIF="boom.sif"
   NV_FLAG=""
   if [ "${BOOM_GPU__ENABLED:-false}" = "true" ]; then

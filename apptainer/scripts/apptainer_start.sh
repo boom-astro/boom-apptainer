@@ -270,6 +270,8 @@ fi
 # -----------------------------
 if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "scheduler" "$2"; then
   survey=$3
+  # Exported, not --env: instance start does not forward it to apptainer exec.
+  export BOOM_GPU__ENABLED="${BOOM_GPU__ENABLED:-false}"
   # Only ZTF uses the GPU; LSST/DECam/WINTER always run on CPU.
   BOOM_SIF="boom.sif"
   NV_FLAG=""
