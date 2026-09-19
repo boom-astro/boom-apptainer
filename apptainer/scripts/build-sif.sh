@@ -12,6 +12,7 @@
 #     - "mongo"        : builds MongoDB service
 #     - "valkey"       : builds Valkey service
 #     - "kafka"        : builds Kafka service
+#     - "api"          : builds the BOOM API service
 #     - "boom"         : builds BOOM service (CPU or GPU variant depending on BOOM_GPU__ENABLED)
 #     - "boom-cpu"     : builds BOOM CPU variant explicitly
 #     - "boom-gpu"     : builds BOOM GPU variant explicitly
