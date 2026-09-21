@@ -67,6 +67,7 @@ Stage: build
        /app/target/release/repair_photometry_ordering \
        /app/target/release/mpcorb_ingest \
        /app/target/release/backfill_hpx \
+       /app/target/release/backfill_host_galaxy \
        /app/target/release/enrich_reprocess \
        /app/bin/
 
@@ -96,6 +97,7 @@ Stage: final
     /app/bin/repair_photometry_ordering /app/repair_photometry_ordering
     /app/bin/mpcorb_ingest /app/mpcorb_ingest
     /app/bin/backfill_hpx /app/backfill_hpx
+    /app/bin/backfill_host_galaxy /app/backfill_host_galaxy
     /app/bin/enrich_reprocess /app/enrich_reprocess
     /opt/ort /opt/
     /opt/kafka /opt/
