@@ -20,14 +20,14 @@ class HealthHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self.respond(200, "ok\n")
         elif self.path.startswith("/consumer_health"):
-            survey = self.path.removeprefix("/consumer_health").strip("/")
+            survey = self.path[len("/consumer_health"):].strip("/")
             process = f"/app/kafka_consumer {survey}" if survey else "/app/kafka_consumer"
             label = f"consumer {survey}" if survey else "consumer"
             status = check_process(process)
             self.respond(200 if status else 503,
                          f"{label} {'is healthy' if status else 'unhealthy'}\n")
         elif self.path.startswith("/scheduler_health"):
-            survey = self.path.removeprefix("/scheduler_health").strip("/")
+            survey = self.path[len("/scheduler_health"):].strip("/")
             process = f"/app/scheduler {survey}" if survey else "/app/scheduler"
             label = f"scheduler {survey}" if survey else "scheduler"
             status = check_process(process)

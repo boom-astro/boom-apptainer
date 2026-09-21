@@ -260,7 +260,7 @@ if start_service "listener" "$2"; then
   else
     echo && echo "$(current_datetime) - Starting Boom healthcheck listener"
     mkdir -p "$LOGS_DIR/listener"
-    python "$HEALTHCHECK_DIR/boom-healthcheck-listener.py" > "$LOGS_DIR/listener/listener.log" 2>&1 &
+    python3 "$HEALTHCHECK_DIR/boom-healthcheck-listener.py" > "$LOGS_DIR/listener/listener.log" 2>&1 &
     "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh"
   fi
 fi
