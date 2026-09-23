@@ -4,4 +4,4 @@ From: mongo:8.2
 %runscript
     export MONGO_INITDB_ROOT_USERNAME=${BOOM_DATABASE__USERNAME:-mongoadmin}
     export MONGO_INITDB_ROOT_PASSWORD=${BOOM_DATABASE__PASSWORD:?BOOM_DATABASE__PASSWORD must be set and non-empty}
-    exec docker-entrypoint.sh mongod --logpath /log/mongo.log
+    exec docker-entrypoint.sh mongod --logpath /log/mongo.log --slowms=500 --slowOpSampleRate=0.1
