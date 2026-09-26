@@ -55,7 +55,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 cpt=0
-until apptainer exec instance://"${INSTANCE:-kafka}" /opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server localhost:"${PORT:-9092}" > /dev/null 2>&1; do
+until timeout 20 apptainer exec instance://"${INSTANCE:-kafka}" /opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server localhost:"${PORT:-9092}" > /dev/null 2>&1; do
   log "kafka unhealthy" "$RED"
   if [ -n "$NB_RETRIES" ] && [ $cpt -ge "$NB_RETRIES" ]; then
     exit 1

@@ -15,7 +15,7 @@ NB_RETRIES=${1:-}
 GRAFANA_URL="http://localhost:3000/api/health"
 
 cpt=0
-until curl -sf "$GRAFANA_URL" > /dev/null; do
+until curl -sf --max-time 3 "$GRAFANA_URL" > /dev/null; do
   echo -e "${RED}$(current_datetime) - grafana unhealthy${END}"
   if [ -n "$NB_RETRIES" ] && [ $cpt -ge "$NB_RETRIES" ]; then
     exit 1

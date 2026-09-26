@@ -56,7 +56,7 @@ done
 
 cpt=0
 until echo 'db.runCommand("ping").ok' | \
-  apptainer exec instance://"${INSTANCE:-mongo}" mongosh localhost:"${PORT:-27017}"/test --quiet 2>/dev/null | \
+  timeout 10 apptainer exec instance://"${INSTANCE:-mongo}" mongosh localhost:"${PORT:-27017}"/test --quiet 2>/dev/null | \
   grep -q 1; do
   log "mongodb unhealthy" "$RED"
   if [ -n "$NB_RETRIES" ] && [ "$cpt" -ge "$NB_RETRIES" ]; then
