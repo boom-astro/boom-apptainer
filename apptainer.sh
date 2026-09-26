@@ -69,7 +69,11 @@ stop_mongo() {
 
   # mongod closes its port when shutdown starts and apptainer force-kills at 10s, so wait on the process.
   mongod_pid=$(pgrep -P "$instance_pid" mongod | head -1)
-  [ -z "$mongod_pid" ] && mongod_pid="$instance_pid"
+  if [ -z "$mongod_pid" ]; then
+    echo -e "${YELLOW}WARNING${END}: no mongod process in the mongo instance, stopping the instance"
+    apptainer instance stop mongo > /dev/null 2>&1
+    return 0
+  fi
 
   load_env
 
