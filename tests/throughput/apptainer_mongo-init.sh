@@ -52,6 +52,11 @@ mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
     db.ZTF_alerts_cutouts.drop();
     db.filters.drop();"
 
+# A current MPC_orbits keeps the scheduler from holding the workers for an MPCORB download
+mongosh "$MONGO_URI/$DB_NAME?authSource=admin" --quiet --eval "
+    db.MPC_orbits.drop();
+    db.MPC_orbits.insertOne({ _id: 'throughput-benchmark', updated_at: Double(Date.now() / 1000) });"
+
 # add the filters table with an index on filter_id
 mongosh "$MONGO_URI/$DB_NAME?authSource=admin" \
     --eval "db.createCollection('filters'); db.filters.createIndex({ filter_id: 1 })"
