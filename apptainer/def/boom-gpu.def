@@ -68,6 +68,7 @@ Stage: build
        /app/target/release/mpcorb_ingest \
        /app/target/release/backfill_hpx \
        /app/target/release/backfill_host_galaxy \
+       /app/target/release/find_tracklets \
        /app/target/release/enrich_reprocess \
        /app/bin/
 
@@ -98,6 +99,7 @@ Stage: final
     /app/bin/mpcorb_ingest /app/mpcorb_ingest
     /app/bin/backfill_hpx /app/backfill_hpx
     /app/bin/backfill_host_galaxy /app/backfill_host_galaxy
+    /app/bin/find_tracklets /app/find_tracklets
     /app/bin/enrich_reprocess /app/enrich_reprocess
     /opt/ort /opt/
     /opt/kafka /opt/
