@@ -66,6 +66,12 @@ async fn main() -> std::io::Result<()> {
         tracing::info!("Babamul API endpoints are ENABLED");
         // Abandoned sign-in attempts are only cleaned up by this TTL index —
         // completed flows delete their own state, incomplete ones never do.
+        if let Err(error) =
+            boom::api::admin::reconcile_babamul_admins(&database, &config.babamul.admin_emails)
+                .await
+        {
+            panic!("failed to reconcile babamul admins: {error}");
+        }
         if let Err(error) = routes::babamul::oauth::ensure_oauth_state_index(&database).await {
             log_error!(WARN, error, "failed to create the OAuth TTL indexes");
         }
@@ -182,8 +188,6 @@ async fn main() -> std::io::Result<()> {
                 .service(routes::filters::get_filter)
                 .service(routes::filters::delete_filter)
                 .service(routes::filters::post_filter_version)
-                .service(routes::filters::post_filter_test)
-                .service(routes::filters::post_filter_test_count)
                 .service(routes::filters::get_filter_schema)
                 .service(routes::users::post_user)
                 .service(routes::users::get_users)
@@ -192,6 +196,16 @@ async fn main() -> std::io::Result<()> {
                 .service(routes::catalogs::get_catalogs)
                 .service(routes::catalogs::get_catalog_indexes)
                 .service(routes::catalogs::get_catalog_sample)
+                .service(routes::tasks::get_task_types)
+                .service(routes::tasks::submit_task)
+                .service(routes::tasks::get_tasks)
+                .service(routes::tasks::get_task_logs)
+                .service(routes::tasks::cancel_task)
+                .service(routes::tasks::get_data_mutations)
+                // Registered after the more specific /tasks/... paths: actix
+                // matches in registration order, so a leading {task_id} route
+                // would swallow /tasks/types.
+                .service(routes::tasks::get_task)
                 .service(routes::queries::post_find_query)
                 .service(routes::queries::post_cone_search_query)
                 .service(routes::surveys::get_cutouts)
@@ -199,6 +213,14 @@ async fn main() -> std::io::Result<()> {
                 .service(routes::queries::post_count_query)
                 .service(routes::queries::post_estimated_count_query)
                 .service(routes::queries::post_pipeline_query)
+                // Larger JSON limit for the skymap these accept (~130 MB base64).
+                // This prefix-less scope swallows any sibling after it, so keep it last.
+                .service(
+                    actix_web::web::scope("")
+                        .app_data(web::JsonConfig::default().limit(209_715_200))
+                        .service(routes::filters::post_filter_test)
+                        .service(routes::filters::post_filter_test_count),
+                )
                 .wrap(Logger::default()),
         )
     })
