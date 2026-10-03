@@ -2,6 +2,9 @@ Bootstrap: docker
 From: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 Stage: build
 
+%arguments
+    BOOM_GIT_SHA=
+
 # The `gpu` feature pulls in villar-pso, whose build script compiles CUDA
 # kernels with nvcc, so this stage needs the devel image. The final stage below
 # only runs them, so it goes back to the runtime image and the SIF stays small.
@@ -53,6 +56,8 @@ Stage: build
     mv /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
     rm -f /tmp/kafka.tgz ; } || exit 1
 
+    # Compiled in and recorded on every data mutation; unset is recorded as unknown.
+    if [ -n "{{ BOOM_GIT_SHA }}" ]; then export BOOM_GIT_SHA="{{ BOOM_GIT_SHA }}"; fi
     cd /app || exit 1
     cargo build --release --features gpu
 
@@ -60,12 +65,14 @@ Stage: build
     cp /app/target/release/kafka_producer \
        /app/target/release/kafka_consumer \
        /app/target/release/scheduler \
+       /app/target/release/task_worker \
        /app/target/release/migrate_fp_flux \
        /app/target/release/migrate_snr \
        /app/target/release/reprocess_crossmatch \
        /app/target/release/prepare_catalog \
        /app/target/release/repair_photometry_ordering \
        /app/target/release/mpcorb_ingest \
+       /app/target/release/backfill_detection_span \
        /app/target/release/backfill_hpx \
        /app/target/release/backfill_host_galaxy \
        /app/target/release/find_tracklets \
@@ -91,12 +98,14 @@ Stage: final
     /app/bin/kafka_producer /app/kafka_producer
     /app/bin/kafka_consumer /app/kafka_consumer
     /app/bin/scheduler /app/scheduler
+    /app/bin/task_worker /app/task_worker
     /app/bin/migrate_fp_flux /app/migrate_fp_flux
     /app/bin/migrate_snr /app/migrate_snr
     /app/bin/reprocess_crossmatch /app/reprocess_crossmatch
     /app/bin/prepare_catalog /app/prepare_catalog
     /app/bin/repair_photometry_ordering /app/repair_photometry_ordering
     /app/bin/mpcorb_ingest /app/mpcorb_ingest
+    /app/bin/backfill_detection_span /app/backfill_detection_span
     /app/bin/backfill_hpx /app/backfill_hpx
     /app/bin/backfill_host_galaxy /app/backfill_host_galaxy
     /app/bin/find_tracklets /app/find_tracklets

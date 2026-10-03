@@ -1,6 +1,9 @@
 Bootstrap: docker
 From: rust:1.93.1-slim-trixie
 
+%arguments
+    BOOM_GIT_SHA=
+
 %environment
     export PATH=/app:/opt/kafka/bin:$PATH
     export LD_LIBRARY_PATH=/opt/ort:$LD_LIBRARY_PATH
@@ -47,18 +50,22 @@ From: rust:1.93.1-slim-trixie
     ln -s /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
     rm -f /tmp/kafka.tgz ; } || exit 1
 
+    # Compiled in and recorded on every data mutation; unset is recorded as unknown.
+    if [ -n "{{ BOOM_GIT_SHA }}" ]; then export BOOM_GIT_SHA="{{ BOOM_GIT_SHA }}"; fi
     cd /app || exit 1
     cargo build --release
 
     cp /app/target/release/kafka_producer /app/kafka_producer
     cp /app/target/release/kafka_consumer /app/kafka_consumer
     cp /app/target/release/scheduler /app/scheduler
+    cp /app/target/release/task_worker /app/task_worker
     cp /app/target/release/migrate_fp_flux /app/migrate_fp_flux
     cp /app/target/release/migrate_snr /app/migrate_snr
     cp /app/target/release/reprocess_crossmatch /app/reprocess_crossmatch
     cp /app/target/release/prepare_catalog /app/prepare_catalog
     cp /app/target/release/repair_photometry_ordering /app/repair_photometry_ordering
     cp /app/target/release/mpcorb_ingest /app/mpcorb_ingest
+    cp /app/target/release/backfill_detection_span /app/backfill_detection_span
     cp /app/target/release/backfill_hpx /app/backfill_hpx
     cp /app/target/release/backfill_host_galaxy /app/backfill_host_galaxy
     cp /app/target/release/find_tracklets /app/find_tracklets

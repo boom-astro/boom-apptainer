@@ -39,6 +39,9 @@ current_datetime() {
     TZ=utc date "+%Y-%m-%d %H:%M:%S"
 }
 
+# Recorded by the task ledger on every data mutation; blank outside a git checkout.
+GIT_SHA="${BOOM_GIT_SHA:-$(git rev-parse HEAD 2>/dev/null)}"
+
 start_service() {
     local service="$1"
     local target="$2"
@@ -56,8 +59,8 @@ if [ "$1" = "benchmark" ]; then
     mkdir -p "tests/apptainer/sif"
 
     # Build BOOM images for both CPU and GPU variants
-    apptainer build --force "tests/apptainer/sif/boom-gpu.sif" "apptainer/def/boom-gpu.def"
-    apptainer build --force "tests/apptainer/sif/boom.sif" "apptainer/def/boom.def"
+    apptainer build --force --build-arg BOOM_GIT_SHA="$GIT_SHA" "tests/apptainer/sif/boom-gpu.sif" "apptainer/def/boom-gpu.def"
+    apptainer build --force --build-arg BOOM_GIT_SHA="$GIT_SHA" "tests/apptainer/sif/boom.sif" "apptainer/def/boom.def"
 
     # Build other benchmark services
     for service in mongo kafka valkey; do
@@ -69,7 +72,7 @@ if [ "$1" = "benchmark" ]; then
       echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
       BOOM="boom-gpu"
     fi
-    apptainer build --force "tests/apptainer/sif/$BOOM.sif" "apptainer/def/$BOOM.def"
+    apptainer build --force --build-arg BOOM_GIT_SHA="$GIT_SHA" "tests/apptainer/sif/$BOOM.sif" "apptainer/def/$BOOM.def"
   fi
   exit 0
 fi
@@ -87,12 +90,12 @@ fi
 # -----------------------------
 if start_service "boom" "$1" || [ "$1" = "boom-gpu" ]; then
   echo -e "${YELLOW}$(current_datetime) - Building BOOM GPU image${END}"
-  apptainer build --force apptainer/sif/boom-gpu.sif apptainer/def/boom-gpu.def
+  apptainer build --force --build-arg BOOM_GIT_SHA="$GIT_SHA" apptainer/sif/boom-gpu.sif apptainer/def/boom-gpu.def
 fi
 
 if start_service "boom" "$1" || [ "$1" = "boom-cpu" ]; then
   echo -e "${YELLOW}$(current_datetime) - Building BOOM CPU image${END}"
-  apptainer build --force apptainer/sif/boom.sif apptainer/def/boom.def
+  apptainer build --force --build-arg BOOM_GIT_SHA="$GIT_SHA" apptainer/sif/boom.sif apptainer/def/boom.def
 fi
 
 if start_service "otel" "$1"; then
@@ -107,7 +110,11 @@ if [ "$1" = "grafana" ]; then
   apptainer build --force apptainer/sif/grafana.sif apptainer/def/grafana.def
 fi
 
-for service in mongo kafka valkey api prometheus kuma; do
+if start_service "api" "$1"; then
+  apptainer build --force --build-arg BOOM_GIT_SHA="$GIT_SHA" apptainer/sif/api.sif apptainer/def/api.def
+fi
+
+for service in mongo kafka valkey prometheus kuma; do
   if start_service "$service" "$1"; then
     apptainer build --force apptainer/sif/"$service".sif apptainer/def/"$service".def
   fi

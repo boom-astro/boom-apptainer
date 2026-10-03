@@ -5,6 +5,7 @@
 # $2 = service to start:
 #      - all         : starts all services
 #      - api         : starts the Boom API service
+#      - task-worker : starts the task worker (queued catalog ingests, migrations, reprocessing)
 #      - boom        : starts boom instance and scheduler/consumer if survey name/date provided
 #      - consumer    : starts the consumer process
 #      - scheduler   : starts the scheduler process
@@ -71,10 +72,10 @@ start_service() {
 }
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
-  && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
+  && [ "$2" != "task-worker" ] && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
   && [ "$2" != "grafana" ] && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | task-worker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
   exit 1
 fi
 
@@ -389,6 +390,31 @@ if start_service "api" "$2"; then
     apptainer exec --pwd /app "instance://api" /app/boom-api \
       > "$LOGS_DIR/api.log" 2>&1 &
     "$HEALTHCHECK_DIR/api-healthcheck.sh"
+  fi
+fi
+
+# -----------------------------
+# Task worker
+# -----------------------------
+if start_service "task-worker" "$2"; then
+  if apptainer instance list | awk '{print $1}' | grep -xq "task_worker"; then
+    echo && echo -e "${YELLOW}$(current_datetime) - Task worker instance is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting task worker instance"
+    apptainer instance start \
+      --bind "$BOOM_DIR/.env:/app/.env" \
+      --bind "$CONFIG_FILE:/app/config.yaml" \
+      "$SIF_DIR/boom.sif" task_worker
+    sleep 3
+  fi
+
+  if pgrep -f "/app/task_worker" > /dev/null; then
+    echo -e "${YELLOW}Task worker already running.${END}"
+  else
+    apptainer exec --pwd /app "instance://task_worker" /app/task_worker \
+      > "$LOGS_DIR/task_worker.log" 2>&1 &
+    sleep 1
+    "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/task_worker" task-worker
   fi
 fi
 
