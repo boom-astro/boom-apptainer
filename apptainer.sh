@@ -458,7 +458,7 @@ fi
 # Display log error
 # -----------------------------
 if [ "$1" == "error" ]; then
-  for survey in winter lsst ztf; do
+  for survey in winter lsst ztf decam; do
      log_file="$LOGS_DIR/${survey}_scheduler.log"
      if [ -f "$log_file" ]; then
        echo -e "${BLUE}Displaying $survey scheduler ERROR and WARN log...${END}"
