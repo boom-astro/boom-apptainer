@@ -95,6 +95,8 @@ if [ "$2" = "dev" ]; then
     --bind "$BOOM_DIR/src:/app/src" \
     --bind "$BOOM_DIR/Cargo.toml:/app/Cargo.toml" \
     --bind "$BOOM_DIR/Cargo.lock:/app/Cargo.lock" \
+    --bind "$BOOM_DIR/build.rs:/app/build.rs" \
+    --bind "$BOOM_DIR/proto:/app/proto" \
     --bind "$BOOM_DIR/apache-avro-macros:/app/apache-avro-macros" \
     --bind "$BOOM_DIR/data:/app/data" \
     --bind "$PERSISTENT_DIR/target:/app/target" \

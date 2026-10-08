@@ -12,6 +12,8 @@ From: rust:1.93.1-slim-trixie
 %files
     Cargo.toml /app/Cargo.toml
     Cargo.lock /app/Cargo.lock
+    build.rs /app/build.rs
+    proto /app/proto
     apache-avro-macros /app/apache-avro-macros
     data/models /app/data/models
     data/ls_footprint_moc.fits /app/data/ls_footprint_moc.fits
@@ -50,6 +52,6 @@ From: rust:1.93.1-slim-trixie
     apt-get purge -y gcc g++ libhdf5-dev libclang-dev perl make libsasl2-dev libcfitsio-dev pkg-config
     apt-get autoremove -y
     apt-get clean
-    rm -rf /app/target /app/src /app/apache-avro-macros /app/Cargo.toml /app/Cargo.lock
+    rm -rf /app/target /app/src /app/apache-avro-macros /app/Cargo.toml /app/Cargo.lock /app/build.rs /app/proto
     rm -rf /root/.cargo /usr/local/cargo /usr/local/rustup
     rm -rf /var/lib/apt/lists/*

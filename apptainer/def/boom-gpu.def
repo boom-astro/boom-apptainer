@@ -12,6 +12,8 @@ Stage: build
 %files
     Cargo.toml /app/Cargo.toml
     Cargo.lock /app/Cargo.lock
+    build.rs /app/build.rs
+    proto /app/proto
     apache-avro-macros /app/apache-avro-macros
     src /app/src
 
