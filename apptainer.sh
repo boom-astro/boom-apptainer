@@ -10,6 +10,9 @@ LOGS_DIR="$BOOM_DIR/logs/boom"
 SIF_DIR="$BOOM_DIR/apptainer/sif"
 MONGO_SHUTDOWN_TIMEOUT=${MONGO_SHUTDOWN_TIMEOUT:-900}
 
+# Group-writable data and logs so any member can run the instance.
+umask 007
+
 BLUE="\e[0;34m"
 RED="\e[31m"
 GREEN="\e[32m"
