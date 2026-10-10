@@ -8,6 +8,10 @@ From: rust:1.93.1-slim-trixie
     export PATH=/app:/opt/kafka/bin:$PATH
     export LD_LIBRARY_PATH=/opt/ort:$LD_LIBRARY_PATH
     export ORT_DYLIB_PATH=/opt/ort/libonnxruntime.so
+    export BOOM_BOOMPY_PATH=/app/boompy
+    export UV_PROJECT_ENVIRONMENT=/app/boompy/.venv
+    # The SIF is read-only: run the environment synced at build time as-is
+    export UV_NO_SYNC=1
     # Optional overrides
     export BOOM_DATABASE__HOST=localhost
 
@@ -20,11 +24,13 @@ From: rust:1.93.1-slim-trixie
     data/models /app/data/models
     data/ls_footprint_moc.fits /app/data/ls_footprint_moc.fits
     src /app/src
+    boompy /app/boompy
 
 %post
     KAFKA_VERSION=4.3.1
     SCALA_VERSION=2.13
     ONNXRUNTIME_VERSION=1.24.4
+    UV_VERSION=0.10.0
     apt-get update && \
     apt-get install -y --no-install-recommends \
       curl gcc g++ libhdf5-dev libclang-dev perl \
@@ -51,6 +57,13 @@ From: rust:1.93.1-slim-trixie
     tar -xzf /tmp/kafka.tgz -C /opt && \
     ln -s /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} /opt/kafka && \
     rm -f /tmp/kafka.tgz ; } || exit 1
+
+    # boompy fetches archival catalogs for the task worker, from the committed lockfile
+    curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_UNMANAGED_INSTALL=/usr/local/bin sh || exit 1
+    rm -rf /app/boompy/.venv
+    export UV_PROJECT_ENVIRONMENT=/app/boompy/.venv
+    uv sync --project /app/boompy --frozen --no-dev --no-cache || exit 1
+    mkdir -p /app/data/catalogs
 
     # Compiled in and recorded on every data mutation; unset is recorded as unknown.
     if [ -n "{{ BOOM_GIT_SHA }}" ]; then export BOOM_GIT_SHA="{{ BOOM_GIT_SHA }}"; fi

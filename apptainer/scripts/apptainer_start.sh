@@ -97,7 +97,7 @@ fi
 # BOOM dev
 # -----------------------------
 if [ "$2" = "dev" ]; then
-  mkdir -p "$PERSISTENT_DIR/target"
+  mkdir -p "$PERSISTENT_DIR/target" "$PERSISTENT_DIR/boompy-venv"
   if apptainer instance list | awk '{print $1}' | grep -xq "dev"; then
     echo -e "${YELLOW}$(current_datetime) - dev instance is already running${END}"
     exit 0
@@ -112,6 +112,8 @@ if [ "$2" = "dev" ]; then
     --bind "$BOOM_DIR/build.rs:/app/build.rs" \
     --bind "$BOOM_DIR/proto:/app/proto" \
     --bind "$BOOM_DIR/apache-avro-macros:/app/apache-avro-macros" \
+    --bind "$BOOM_DIR/boompy:/app/boompy" \
+    --bind "$PERSISTENT_DIR/boompy-venv:/opt/boompy-venv" \
     --bind "$BOOM_DIR/data:/app/data" \
     --bind "$PERSISTENT_DIR/target:/app/target" \
     "$SIF_DIR/dev.sif" dev
@@ -417,9 +419,11 @@ if start_service "task-worker" "$2"; then
     echo && echo -e "${YELLOW}$(current_datetime) - Task worker instance is already running${END}"
   else
     echo && echo "$(current_datetime) - Starting task worker instance"
+    mkdir -p "$PERSISTENT_DIR/catalog_data"
     apptainer instance start \
       --bind "$BOOM_DIR/.env:/app/.env" \
       --bind "$CONFIG_FILE:/app/config.yaml" \
+      --bind "$PERSISTENT_DIR/catalog_data:/app/data/catalogs" \
       "$SIF_DIR/boom.sif" task_worker
     sleep 3
   fi
@@ -427,6 +431,8 @@ if start_service "task-worker" "$2"; then
   if pgrep -f "/app/task_worker" > /dev/null; then
     echo -e "${YELLOW}Task worker already running.${END}"
   else
+    # Staging area for catalog chunks; exported, not --env: instance start does not forward it to apptainer exec.
+    export BOOM_CATALOG_DATA_PATH=/app/data/catalogs
     setsid apptainer exec --pwd /app "instance://task_worker" /app/task_worker \
       > "$LOGS_DIR/task_worker.log" 2>&1 &
     sleep 1
