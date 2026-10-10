@@ -489,7 +489,14 @@ if [ "$1" == "show" ]; then
       echo "  (no keys)"
     else
       echo "$keys" | while read key; do
-        list_len=$(apptainer exec instance://valkey valkey-cli llen "$key")
+        case $(apptainer exec instance://valkey valkey-cli type "$key") in
+          hash) len_cmd=hlen ;;
+          zset) len_cmd=zcard ;;
+          set) len_cmd=scard ;;
+          stream) len_cmd=xlen ;;
+          *) len_cmd=llen ;;
+        esac
+        list_len=$(apptainer exec instance://valkey valkey-cli $len_cmd "$key")
         list_len_with_space=$(echo "$list_len" | sed ':a;s/\B[0-9]\{3\}\>/ &/;ta')
         echo "  $key: $list_len_with_space"
       done
