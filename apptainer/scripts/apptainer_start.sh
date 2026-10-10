@@ -27,6 +27,10 @@
 #      means --from, omit to follow the current UTC day)
 # $5 = program ID (optional, used by consumer)
 # $6 = scheduler config path (optional, used by scheduler)
+#
+# Services start in dependency order, so the first one not healthy within
+# STARTUP_TIMEOUT seconds (default 300) aborts the whole start.
+# Background processes run under setsid so a Ctrl-C here does not stop them.
 
 BOOM_DIR="$1"
 LOGS_DIR="$BOOM_DIR/logs/boom"
@@ -34,6 +38,7 @@ PERSISTENT_DIR="$BOOM_DIR/apptainer/persistent"
 SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
 HEALTHCHECK_DIR="$SCRIPTS_DIR/healthcheck"
 SIF_DIR="$BOOM_DIR/apptainer/sif"
+STARTUP_TIMEOUT=${STARTUP_TIMEOUT:-300}
 
 # -----------------------------
 # Load environment variables from .env file
@@ -69,6 +74,15 @@ start_service() {
         return 0
     fi
     return 1
+}
+
+wait_healthy() {
+    local name="$1"
+    shift
+    if ! timeout --foreground "$STARTUP_TIMEOUT" "$@"; then
+        echo -e "${RED}$(current_datetime) - $name not healthy within ${STARTUP_TIMEOUT}s, aborting${END}"
+        exit 1
+    fi
 }
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
@@ -120,7 +134,7 @@ if start_service "mongo" "$2"; then
       --bind "$LOGS_DIR/mongodb:/log" \
       "$SIF_DIR/mongo.sif" mongo
     sleep 5
-    "$HEALTHCHECK_DIR/mongodb-healthcheck.sh"
+    wait_healthy MongoDB "$HEALTHCHECK_DIR/mongodb-healthcheck.sh"
   fi
 fi
 
@@ -138,7 +152,7 @@ if start_service "valkey" "$2"; then
       --bind "$PERSISTENT_DIR/valkey:/data" \
       --bind "$LOGS_DIR/valkey:/log" \
       "$SIF_DIR/valkey.sif" valkey
-    "$HEALTHCHECK_DIR/valkey-healthcheck.sh"
+    wait_healthy Valkey "$HEALTHCHECK_DIR/valkey-healthcheck.sh"
   fi
 fi
 
@@ -158,7 +172,7 @@ if start_service "kafka" "$2"; then
       --bind "$PERSISTENT_DIR/kafka_data:/opt/kafka/config" \
       --bind "$LOGS_DIR/kafka:/opt/kafka/logs" \
       "$SIF_DIR/kafka.sif" kafka
-    "$HEALTHCHECK_DIR/kafka-healthcheck.sh"
+    wait_healthy Kafka "$HEALTHCHECK_DIR/kafka-healthcheck.sh"
 
     if [ "$3" = "init" ]; then
       echo "$(current_datetime) - Initializing Kafka ACLs"
@@ -184,7 +198,7 @@ if start_service "prometheus" "$2"; then
       --bind "$PERSISTENT_DIR/prometheus:/prometheus/data" \
       --bind "$LOGS_DIR/prometheus:/var/log" \
       "$SIF_DIR/prometheus.sif" prometheus
-    "$HEALTHCHECK_DIR/prometheus-healthcheck.sh"
+    wait_healthy Prometheus "$HEALTHCHECK_DIR/prometheus-healthcheck.sh"
   fi
 fi
 
@@ -208,7 +222,7 @@ if [ "$2" = "grafana" ]; then
       --bind "$BOOM_DIR/scripts/grafana-dashboard-provisioning.sh:/scripts/grafana-dashboard-provisioning.sh:ro" \
       --bind "$LOGS_DIR/grafana:/var/log/grafana" \
       "$SIF_DIR/grafana.sif" grafana
-    "$HEALTHCHECK_DIR/grafana-healthcheck.sh"
+    wait_healthy Grafana "$HEALTHCHECK_DIR/grafana-healthcheck.sh"
   fi
 fi
 
@@ -223,7 +237,7 @@ if [ "$2" = "tempo" ]; then
     mkdir -p "$PERSISTENT_DIR/tempo"
     mkdir -p "$LOGS_DIR/tempo"
     # Tempo inherits the host OTEL_EXPORTER_OTLP_ENDPOINT, so disable its self-export.
-    apptainer exec \
+    setsid apptainer exec \
       --env OTEL_TRACES_EXPORTER=none \
       --bind "$BOOM_DIR/config/apptainer-tempo-config.yaml:/etc/tempo/config.yaml" \
       --bind "$PERSISTENT_DIR/tempo:/var/tempo" \
@@ -231,7 +245,7 @@ if [ "$2" = "tempo" ]; then
       "$SIF_DIR/tempo.sif" /tempo -config.file=/etc/tempo/config.yaml \
       > "$LOGS_DIR/tempo/tempo.log" 2>&1 &
     sleep 1
-    "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
+    wait_healthy Tempo "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
   fi
 fi
 
@@ -244,13 +258,13 @@ if start_service "otel" "$2"; then
   else
     echo && echo "$(current_datetime) - Starting Otel Collector"
     mkdir -p "$LOGS_DIR/otel"
-    apptainer exec \
+    setsid apptainer exec \
       --bind "$BOOM_DIR/config/apptainer-otel-collector-config.yaml:/etc/otelcol/config.yaml" \
       --bind "$LOGS_DIR/otel:/var/log/otel" \
       "$SIF_DIR/otel.sif" /otelcol --config /etc/otelcol/config.yaml \
       > "$LOGS_DIR/otel/otel.log" 2>&1 &
     sleep 1
-    "$HEALTHCHECK_DIR/process-healthcheck.sh" "otelcol" otel-collector
+    wait_healthy "Otel Collector" "$HEALTHCHECK_DIR/process-healthcheck.sh" "otelcol" otel-collector
   fi
 fi
 
@@ -263,8 +277,8 @@ if start_service "listener" "$2"; then
   else
     echo && echo "$(current_datetime) - Starting Boom healthcheck listener"
     mkdir -p "$LOGS_DIR/listener"
-    python3 "$HEALTHCHECK_DIR/boom-healthcheck-listener.py" > "$LOGS_DIR/listener/listener.log" 2>&1 &
-    "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh"
+    setsid python3 "$HEALTHCHECK_DIR/boom-healthcheck-listener.py" > "$LOGS_DIR/listener/listener.log" 2>&1 &
+    wait_healthy "Boom healthcheck listener" "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh"
   fi
 fi
 
@@ -347,7 +361,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       if pgrep -f "/app/kafka_consumer ${ARGS[*]}" > /dev/null; then
         echo -e "${YELLOW}Boom consumer already running for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}.${END}"
       else
-        apptainer exec --pwd /app \
+        setsid apptainer exec --pwd /app \
           "instance://boom_$survey" /app/kafka_consumer "${ARGS[@]}" \
           > "$LOGS_DIR/${survey}${date:+_$date}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
         echo -e "${GREEN}Boom consumer started for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}${END}"
@@ -363,7 +377,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       if pgrep -f "/app/scheduler ${ARGS[*]}" > /dev/null; then
         echo -e "${YELLOW}Boom scheduler already running.${END}"
       else
-        apptainer exec --pwd /app "instance://boom_$survey" /app/scheduler \
+        setsid apptainer exec --pwd /app "instance://boom_$survey" /app/scheduler \
           "${ARGS[@]}" > "$LOGS_DIR/${survey}_scheduler.log" 2>&1 &
         echo -e "${GREEN}Boom scheduler started for survey $survey${END}"
       fi
@@ -389,9 +403,9 @@ if start_service "api" "$2"; then
   if pgrep -f "/app/boom-api" > /dev/null; then
     echo -e "${YELLOW}Boom API already running.${END}"
   else
-    apptainer exec --pwd /app "instance://api" /app/boom-api \
+    setsid apptainer exec --pwd /app "instance://api" /app/boom-api \
       > "$LOGS_DIR/api.log" 2>&1 &
-    "$HEALTHCHECK_DIR/api-healthcheck.sh"
+    wait_healthy API "$HEALTHCHECK_DIR/api-healthcheck.sh"
   fi
 fi
 
@@ -413,10 +427,10 @@ if start_service "task-worker" "$2"; then
   if pgrep -f "/app/task_worker" > /dev/null; then
     echo -e "${YELLOW}Task worker already running.${END}"
   else
-    apptainer exec --pwd /app "instance://task_worker" /app/task_worker \
+    setsid apptainer exec --pwd /app "instance://task_worker" /app/task_worker \
       > "$LOGS_DIR/task_worker.log" 2>&1 &
     sleep 1
-    "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/task_worker" task-worker
+    wait_healthy "Task worker" "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/task_worker" task-worker
   fi
 fi
 
@@ -434,6 +448,6 @@ if start_service "kuma" "$2"; then
       --bind "$PERSISTENT_DIR/kuma:/app/data" \
       --bind "$LOGS_DIR/kuma:/app/logs" \
       "$SIF_DIR/kuma.sif" kuma
-    "$HEALTHCHECK_DIR/kuma-healthcheck.sh"
+    wait_healthy "Uptime Kuma" "$HEALTHCHECK_DIR/kuma-healthcheck.sh"
   fi
 fi

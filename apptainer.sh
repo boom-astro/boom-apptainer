@@ -178,7 +178,7 @@ if [ "$1" == "start" ]; then
   fi
   # See apptainer_start.sh for the full explanation of each argument
   "$SCRIPTS_DIR/apptainer_start.sh" "${ARGS[@]}"
-  exit 0
+  exit $?
 fi
 
 # -----------------------------
@@ -293,7 +293,7 @@ if [ "$1" == "restart" ]; then
   shift
   "$0" stop "$@" || exit $?
   "$0" start "$@"
-  exit 0
+  exit $?
 fi
 
 # -----------------------------
