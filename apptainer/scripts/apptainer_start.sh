@@ -77,6 +77,14 @@ start_service() {
     return 1
 }
 
+fresh_log() {
+    local log="$1"
+    if [ -s "$log" ]; then
+        mv "$log" "${log%.log}.$(TZ=utc date +%Y%m%dT%H%M%SZ).log"
+    fi
+    echo "$log"
+}
+
 wait_healthy() {
     local name="$1"
     shift
@@ -246,7 +254,7 @@ if [ "$2" = "tempo" ]; then
       --bind "$PERSISTENT_DIR/tempo:/var/tempo" \
       --bind "$LOGS_DIR/tempo:/var/log/tempo" \
       "$SIF_DIR/tempo.sif" /tempo -config.file=/etc/tempo/config.yaml \
-      > "$LOGS_DIR/tempo/tempo.log" 2>&1 &
+      > "$(fresh_log "$LOGS_DIR/tempo/tempo.log")" 2>&1 &
     sleep 1
     wait_healthy Tempo "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
   fi
@@ -265,7 +273,7 @@ if start_service "otel" "$2"; then
       --bind "$BOOM_DIR/config/apptainer-otel-collector-config.yaml:/etc/otelcol/config.yaml" \
       --bind "$LOGS_DIR/otel:/var/log/otel" \
       "$SIF_DIR/otel.sif" /otelcol --config /etc/otelcol/config.yaml \
-      > "$LOGS_DIR/otel/otel.log" 2>&1 &
+      > "$(fresh_log "$LOGS_DIR/otel/otel.log")" 2>&1 &
     sleep 1
     wait_healthy "Otel Collector" "$HEALTHCHECK_DIR/process-healthcheck.sh" "otelcol" otel-collector
   fi
@@ -280,7 +288,7 @@ if start_service "listener" "$2"; then
   else
     echo && echo "$(current_datetime) - Starting Boom healthcheck listener"
     mkdir -p "$LOGS_DIR/listener"
-    setsid python3 "$HEALTHCHECK_DIR/boom-healthcheck-listener.py" > "$LOGS_DIR/listener/listener.log" 2>&1 &
+    setsid python3 "$HEALTHCHECK_DIR/boom-healthcheck-listener.py" > "$(fresh_log "$LOGS_DIR/listener/listener.log")" 2>&1 &
     wait_healthy "Boom healthcheck listener" "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh"
   fi
 fi
@@ -366,7 +374,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
       else
         setsid apptainer exec --pwd /app \
           "instance://boom_$survey" /app/kafka_consumer "${ARGS[@]}" \
-          > "$LOGS_DIR/${survey}${date:+_$date}${progs:+_${progs//,/_}}_consumer.log" 2>&1 &
+          > "$(fresh_log "$LOGS_DIR/${survey}${date:+_$date}${progs:+_${progs//,/_}}_consumer.log")" 2>&1 &
         echo -e "${GREEN}Boom consumer started for survey $survey${date_option:+ ($date_option)}${progs:+ for program $progs}${END}"
       fi
     fi
@@ -381,7 +389,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
         echo -e "${YELLOW}Boom scheduler already running.${END}"
       else
         setsid apptainer exec --pwd /app "instance://boom_$survey" /app/scheduler \
-          "${ARGS[@]}" > "$LOGS_DIR/${survey}_scheduler.log" 2>&1 &
+          "${ARGS[@]}" > "$(fresh_log "$LOGS_DIR/${survey}_scheduler.log")" 2>&1 &
         echo -e "${GREEN}Boom scheduler started for survey $survey${END}"
       fi
     fi
@@ -407,7 +415,7 @@ if start_service "api" "$2"; then
     echo -e "${YELLOW}Boom API already running.${END}"
   else
     setsid apptainer exec --pwd /app "instance://api" /app/boom-api \
-      > "$LOGS_DIR/api.log" 2>&1 &
+      > "$(fresh_log "$LOGS_DIR/api.log")" 2>&1 &
     wait_healthy API "$HEALTHCHECK_DIR/api-healthcheck.sh"
   fi
 fi
@@ -435,7 +443,7 @@ if start_service "task-worker" "$2"; then
     # Staging area for catalog chunks; exported, not --env: instance start does not forward it to apptainer exec.
     export BOOM_CATALOG_DATA_PATH=/app/data/catalogs
     setsid apptainer exec --pwd /app "instance://task_worker" /app/task_worker \
-      > "$LOGS_DIR/task_worker.log" 2>&1 &
+      > "$(fresh_log "$LOGS_DIR/task_worker.log")" 2>&1 &
     sleep 1
     wait_healthy "Task worker" "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/task_worker" task-worker
   fi
@@ -460,7 +468,7 @@ if start_service "linker" "$2"; then
     echo -e "${YELLOW}Linker already running.${END}"
   else
     setsid apptainer exec --pwd /app "instance://linker" /app/linker \
-      > "$LOGS_DIR/linker.log" 2>&1 &
+      > "$(fresh_log "$LOGS_DIR/linker.log")" 2>&1 &
     sleep 1
     wait_healthy Linker "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/linker" linker
   fi
