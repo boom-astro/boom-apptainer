@@ -6,6 +6,7 @@
 #      - all         : starts all services
 #      - api         : starts the Boom API service
 #      - task-worker : starts the task worker (queued catalog ingests, migrations, reprocessing)
+#      - linker      : starts the ZTF moving-object linker (runs once each night is over)
 #      - boom        : starts boom instance and scheduler/consumer if survey name/date provided
 #      - consumer    : starts the consumer process
 #      - scheduler   : starts the scheduler process
@@ -86,10 +87,10 @@ wait_healthy() {
 }
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
-  && [ "$2" != "task-worker" ] && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
+  && [ "$2" != "task-worker" ] && [ "$2" != "linker" ] && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
   && [ "$2" != "grafana" ] && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | task-worker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | task-worker | linker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
   exit 1
 fi
 
@@ -437,6 +438,31 @@ if start_service "task-worker" "$2"; then
       > "$LOGS_DIR/task_worker.log" 2>&1 &
     sleep 1
     wait_healthy "Task worker" "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/task_worker" task-worker
+  fi
+fi
+
+# -----------------------------
+# Linker
+# -----------------------------
+if start_service "linker" "$2"; then
+  if apptainer instance list | awk '{print $1}' | grep -xq "linker"; then
+    echo && echo -e "${YELLOW}$(current_datetime) - Linker instance is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting linker instance"
+    apptainer instance start \
+      --bind "$BOOM_DIR/.env:/app/.env" \
+      --bind "$CONFIG_FILE:/app/config.yaml" \
+      "$SIF_DIR/boom.sif" linker
+    sleep 3
+  fi
+
+  if pgrep -f "/app/linker" > /dev/null; then
+    echo -e "${YELLOW}Linker already running.${END}"
+  else
+    setsid apptainer exec --pwd /app "instance://linker" /app/linker \
+      > "$LOGS_DIR/linker.log" 2>&1 &
+    sleep 1
+    wait_healthy Linker "$HEALTHCHECK_DIR/process-healthcheck.sh" "/app/linker" linker
   fi
 fi
 

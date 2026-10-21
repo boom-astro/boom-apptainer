@@ -316,19 +316,20 @@ impl DecamAlertWorker {
         object_id: &str,
         aliases: &DecamAliases,
     ) -> Result<(), AlertError> {
-        for (ids, collection) in [
-            (&aliases.ztf, &self.ztf_alert_aux_collection),
-            (&aliases.lsst, &self.lsst_alert_aux_collection),
+        for (ids, collection, other_survey) in [
+            (&aliases.ztf, &self.ztf_alert_aux_collection, "LSST"),
+            (&aliases.lsst, &self.lsst_alert_aux_collection, "ZTF"),
         ] {
             if let Some(id) = ids.first() {
+                let decam = doc! { "$literal": [object_id] };
                 collection
                     .update_one(
-                        doc! {
-                            "_id": id,
-                            "aliases": { "$type": "object" },
-                            "aliases.DECAM.0": { "$exists": false },
-                        },
-                        doc! { "$set": { "aliases.DECAM": [object_id] } },
+                        doc! { "_id": id, "aliases.DECAM.0": { "$exists": false } },
+                        vec![doc! { "$set": { "aliases": { "$cond": [
+                            { "$eq": [{ "$type": "$aliases" }, "object"] },
+                            { "$mergeObjects": ["$aliases", { "DECAM": &decam }] },
+                            { other_survey: [], "DECAM": &decam },
+                        ] } } }],
                     )
                     .await?;
             }
@@ -534,13 +535,12 @@ impl AlertWorker for DecamAlertWorker {
             updated_at: now,
         };
 
-        let status = self
-            .format_and_insert_alert(candid, &alert, &self.alert_collection)
+        if self
+            .check_alert_exists(candid, &self.alert_collection)
             .await
-            .inspect_err(as_error!())?;
-
-        if let ProcessAlertStatus::Exists(_) = status {
-            return Ok(status);
+            .inspect_err(as_error!())?
+        {
+            return Ok(ProcessAlertStatus::Exists(candid));
         }
 
         let survey_matches = Some(
@@ -577,8 +577,17 @@ impl AlertWorker for DecamAlertWorker {
                 &self.db,
             )
             .await?;
-            let host_galaxy =
-                host::associate_from_xmatches(ra, dec, &xmatches, &self.host_galaxy_config);
+            let host_galaxy = host::associate_with_photometry(
+                ra,
+                dec,
+                &xmatches,
+                &self.host_galaxy_config,
+                &self.xmatch_configs,
+                &Survey::Decam,
+                &object_id,
+                &self.db,
+            )
+            .await;
             let obj = DecamObject {
                 object_id: object_id.clone(),
                 prv_candidates,
@@ -610,15 +619,20 @@ impl AlertWorker for DecamAlertWorker {
             }
         }
 
+        self.format_and_insert_cutouts(
+            candid,
+            &object_id,
+            avro_alert.cutout_science,
+            avro_alert.cutout_template,
+            avro_alert.cutout_difference,
+            &self.alert_cutout_storage,
+        )
+        .await
+        .inspect_err(as_error!())?;
+
+        // Inserted last: an alert in the database implies its aux and cutouts are there too.
         let status = self
-            .format_and_insert_cutouts(
-                candid,
-                &object_id,
-                avro_alert.cutout_science,
-                avro_alert.cutout_template,
-                avro_alert.cutout_difference,
-                &self.alert_cutout_storage,
-            )
+            .format_and_insert_alert(candid, &alert, &self.alert_collection)
             .await
             .inspect_err(as_error!())?;
 
