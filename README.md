@@ -469,12 +469,15 @@ Or start individual services:
 docker compose --profile prod up -d consumer-ztf-public scheduler-ztf
 ```
 
-To run a one-shot operational task, override the service's command with `docker compose run`. This is typically used for database migrations such as `migrate_fp_flux` and `migrate_snr`:
+One-shot operational work — catalog ingests, migrations, reprocessing — runs through the [task system](docs/task-system.md) rather than as a binary. Start one from the admin page, or submit it to the API:
 
 ```bash
-docker compose --profile prod run --rm scheduler-ztf /app/migrate_fp_flux
-docker compose --profile prod run --rm scheduler-ztf /app/migrate_snr
+curl -X POST http://localhost:4000/tasks \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"task_type": "migrate_snr", "params": {"survey": "ztf"}}'
 ```
+
+There is deliberately no binary to run over SSH. These jobs take hours, so they have to survive a deploy, stream their logs while running, and be cancellable — and each one records who ran it, with which parameters, under which release, in the append-only `data_mutations` ledger. None of that is available to a process started from a shell.
 
 To tail logs or open a shell in a running container:
 
@@ -514,11 +517,7 @@ the survey, either as two tokens or as `--from=DATE`/`--on=DATE`, and a bare
 ./apptainer.sh stop consumer ztf --on 20250311 public
 ```
 
-Forces the refresh of `MPC_orbits`; the ZTF scheduler already does it daily from `minorplanetcenter.net`.
-```bash
-./apptainer.sh mpc
-```
-Any extra argument is forwarded to the binary, e.g. `./apptainer.sh mpc --dry-run`.
+The ZTF scheduler refreshes `MPC_orbits` daily from `minorplanetcenter.net`; to force it, submit an `mpcorb_ingest` task.
 
 The scheduler prints a variety of messages to your terminal, e.g.:
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to manage Boom using Apptainer.
-# $1 = action: build | start | stop | restart | health | benchmark | filters | mpc | backup | restore | log | error | show
+# $1 = action: build | start | stop | restart | health | benchmark | filters | backup | restore | log | error | show
 
 BOOM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # Retrieves the boom directory
 SCRIPTS_DIR="$BOOM_DIR/apptainer/scripts"
@@ -134,9 +134,9 @@ colorize_log() {
 }
 
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
-  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] && [ "$1" != "mpc" ] \
+  && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
-  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|mpc|backup|restore|log|error|show} [args...]"
+  echo "Usage: $0 {build|start|stop|restart|health|benchmark|filters|backup|restore|log|error|show} [args...]"
   exit 1
 fi
 
@@ -361,23 +361,6 @@ if [ "$1" == "filters" ]; then
   path_to_file="$2"
   "$SCRIPTS_DIR/add_filters.sh" "$path_to_file"
   exit 0
-fi
-
-# -----------------------------
-# Refresh MPC orbital elements
-# -----------------------------
-if [ "$1" == "mpc" ]; then
-  shift
-  mkdir -p "$LOGS_DIR"
-  load_env
-  resolve_config_file
-  # Only needs Mongo and the network, so the CPU image serves the GPU stack too.
-  apptainer exec --pwd /app \
-    --bind "$BOOM_DIR/.env:/app/.env" \
-    --bind "$CONFIG_FILE:/app/config.yaml" \
-    "$SIF_DIR/boom.sif" /app/mpcorb_ingest "$@" \
-    2>&1 | tee "$LOGS_DIR/mpcorb_ingest.log"
-  exit "${PIPESTATUS[0]}"
 fi
 
 # -----------------------------

@@ -429,11 +429,18 @@ if start_service "task-worker" "$2"; then
   else
     echo && echo "$(current_datetime) - Starting task worker instance"
     mkdir -p "$PERSISTENT_DIR/catalog_data"
-    apptainer instance start \
+    # enrich_reprocess loads the ONNX models in-process, so on a GPU stack it runs where the GPU is.
+    TASK_SIF="boom.sif"
+    TASK_NV=""
+    if [ "${BOOM_GPU__ENABLED:-false}" = "true" ]; then
+      TASK_SIF="boom-gpu.sif"
+      TASK_NV="--nv"
+    fi
+    apptainer instance start $TASK_NV \
       --bind "$BOOM_DIR/.env:/app/.env" \
       --bind "$CONFIG_FILE:/app/config.yaml" \
       --bind "$PERSISTENT_DIR/catalog_data:/app/data/catalogs" \
-      "$SIF_DIR/boom.sif" task_worker
+      "$SIF_DIR/$TASK_SIF" task_worker
     sleep 3
   fi
 
