@@ -1500,6 +1500,8 @@ pub struct LinkerConfig {
     pub fast_dense_detections: usize,
     #[serde(default = "default_linker_fast_dense_max_rate")]
     pub fast_dense_max_rate_deg_per_day: f64,
+    #[serde(default)]
+    pub fast_live_every_minutes: u32,
 }
 
 impl LinkerConfig {
@@ -1596,6 +1598,7 @@ impl Default for LinkerConfig {
             fast_max_rate_deg_per_day: default_linker_fast_max_rate(),
             fast_dense_detections: default_linker_fast_dense_detections(),
             fast_dense_max_rate_deg_per_day: default_linker_fast_dense_max_rate(),
+            fast_live_every_minutes: 0,
         }
     }
 }
@@ -1699,23 +1702,7 @@ impl AppConfig {
 
     #[instrument(err)]
     pub fn from_test_config() -> Result<Self, BoomConfigError> {
-        let mut current_dir = std::env::current_dir().expect("Failed to get current directory");
-        let test_config_path = loop {
-            let tests_dir = current_dir.join("tests");
-            let test_config = tests_dir.join("config.test.yaml");
-
-            if test_config.exists() {
-                break test_config;
-            }
-
-            if let Some(parent) = current_dir.parent() {
-                current_dir = parent.to_path_buf();
-            } else {
-                panic!("Could not find workspace root with tests/config.test.yaml");
-            }
-        };
-
-        load_config(Some(test_config_path.to_str().expect("Invalid path")))
+        load_config(Some(&test_config_path()))
     }
 
     /// Validate that all required secrets are present
@@ -1850,6 +1837,21 @@ pub fn load_config(config_path: Option<&str>) -> Result<AppConfig, BoomConfigErr
     );
 
     Ok(app_config)
+}
+
+/// Path to `tests/config.test.yaml`, found by walking up from the working directory.
+pub fn test_config_path() -> String {
+    let mut current_dir = std::env::current_dir().expect("Failed to get current directory");
+    loop {
+        let test_config = current_dir.join("tests").join("config.test.yaml");
+        if test_config.exists() {
+            return test_config.to_str().expect("Invalid path").to_string();
+        }
+        match current_dir.parent() {
+            Some(parent) => current_dir = parent.to_path_buf(),
+            None => panic!("Could not find workspace root with tests/config.test.yaml"),
+        }
+    }
 }
 
 pub async fn get_test_db() -> Database {

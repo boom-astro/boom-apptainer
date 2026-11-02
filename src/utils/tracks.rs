@@ -387,25 +387,39 @@ pub const LONG_GAP: &str = "long_gap";
 const FLAGGED_MAG_SPREAD: f64 = 2.0;
 const LONG_GAP_DAYS: f64 = 30.0;
 const LONG_GAP_MAX_RMS_RATIO: f64 = 5.0;
+const LONE_NIGHT_GAP_DAYS: f64 = 90.0;
 
-/// Whether the detections pin an orbit down: a pair on each of two nights gives
-/// the motion twice, and four nights give enough positions on their own. Three
-/// single detections are six measurements for six parameters, which any orbit
-/// fits with no residual.
+fn night_of_member((survey, _): &Member, jd: f64) -> i64 {
+    night_at(jd, survey_site(survey).as_ref())
+}
+
 pub fn constrained(members: &[Member], jds: &[f64]) -> bool {
     let mut per_night: HashMap<i64, usize> = HashMap::new();
-    for ((survey, _), &jd) in members.iter().zip(jds) {
-        *per_night
-            .entry(night_at(jd, survey_site(survey).as_ref()))
-            .or_default() += 1;
+    for (member, &jd) in members.iter().zip(jds) {
+        *per_night.entry(night_of_member(member, jd)).or_default() += 1;
     }
-    per_night.len() >= 4 || per_night.values().filter(|&&n| n >= 2).count() >= 2
+    let pairs = per_night.values().filter(|&&n| n >= 2).count();
+    per_night.len() >= 4 || (per_night.len() >= 3 && pairs >= 2)
 }
 
 fn longest_gap(jds: &[f64]) -> f64 {
     let mut sorted = jds.to_vec();
     sorted.sort_by(f64::total_cmp);
     sorted.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max)
+}
+
+fn lone_night_across_gap(members: &[Member], jds: &[f64]) -> bool {
+    let mut nights: Vec<(f64, i64)> = members
+        .iter()
+        .zip(jds)
+        .map(|(member, &jd)| (jd, night_of_member(member, jd)))
+        .collect();
+    nights.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let distinct = |side: &[(f64, i64)]| side.iter().map(|n| n.1).collect::<HashSet<_>>().len();
+    (1..nights.len()).any(|k| {
+        nights[k].0 - nights[k - 1].0 > LONE_NIGHT_GAP_DAYS
+            && (distinct(&nights[..k]) < 2 || distinct(&nights[k..]) < 2)
+    })
 }
 
 pub fn track_flags(
@@ -421,7 +435,9 @@ pub fn track_flags(
     if mag_spread.is_some_and(|s| s > FLAGGED_MAG_SPREAD) {
         flags.push(PHOTOMETRY.to_string());
     }
-    if rms_ratio.is_some_and(|r| r > LONG_GAP_MAX_RMS_RATIO) && longest_gap(jds) > LONG_GAP_DAYS {
+    let loose =
+        rms_ratio.is_some_and(|r| r > LONG_GAP_MAX_RMS_RATIO) && longest_gap(jds) > LONG_GAP_DAYS;
+    if loose || lone_night_across_gap(members, jds) {
         flags.push(LONG_GAP.to_string());
     }
     flags
@@ -629,6 +645,7 @@ pub struct UpsertPlan {
     pub bound_fit_residual_arcsec: Option<f64>,
     pub bound_fit_detections: Option<i32>,
     pub orbit: Option<StoredOrbit>,
+    pub seeds: Vec<(StoredOrbit, Option<f64>)>,
     pub mag_spread: Option<f64>,
     pub designation: Option<String>,
     pub kind: Option<String>,
@@ -780,13 +797,22 @@ pub async fn plan_upsert(
     // Counted over this run's own detections, not ones another track keeps.
     let incoming_fit =
         bound_fit.map(|(fit, r)| (fit, r, (members.len() - contested.len()) as i32, orbit));
-    let stored_fit = existing
+    let stored_fits: Vec<_> = existing
         .iter()
         .filter(|t| absorbed.contains(&&t.id))
         .filter_map(|t| {
             let fit = BoundFit::parse(t.bound_fit.as_deref()?)?;
             Some((fit, t.bound_fit_residual_arcsec, fit_detections(t), t.orbit))
         })
+        .collect();
+    let seeds = incoming_fit
+        .iter()
+        .chain(&stored_fits)
+        .filter(|&&(fit, ..)| fit == BoundFit::Good)
+        .filter_map(|&(_, r, _, o)| Some((o?, r)))
+        .collect();
+    let stored_fit = stored_fits
+        .into_iter()
         .max_by_key(|&(fit, _, fit_on, _)| (fit_on, std::cmp::Reverse(fit.rank())));
     let bound_fit = match (incoming_fit, stored_fit) {
         (Some(new), Some(old)) if old.2 > new.2 => Some(old),
@@ -834,6 +860,7 @@ pub async fn plan_upsert(
         bound_fit_residual_arcsec,
         bound_fit_detections,
         orbit,
+        seeds,
         mag_spread: None,
         designation,
         kind,
@@ -1218,6 +1245,8 @@ pub(crate) mod tests {
         let (m, j) = nights(&[2, 1, 1]);
         assert!(!constrained(&m, &j));
         let (m, j) = nights(&[2, 2]);
+        assert!(!constrained(&m, &j));
+        let (m, j) = nights(&[2, 2, 1]);
         assert!(constrained(&m, &j));
         let (m, j) = nights(&[1, 1, 1, 1]);
         assert!(track_flags(&m, &j, None, None).is_empty());
@@ -1225,12 +1254,23 @@ pub(crate) mod tests {
 
     #[test]
     fn test_a_year_long_link_needs_a_tight_residual() {
-        let members = ztf(&[1, 2, 3, 4]);
-        let jds = [2460000.0, 2460000.02, 2460365.0, 2460365.02];
+        let members = ztf(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let jds = [
+            2460000.0, 2460000.02, 2460001.0, 2460001.02, 2460365.0, 2460365.02, 2460366.0,
+            2460366.02,
+        ];
         assert!(track_flags(&members, &jds, Some(1.0), Some(0.5)).is_empty());
         assert_eq!(
             track_flags(&members, &jds, Some(8.0), Some(4.0)),
             vec![PHOTOMETRY.to_string(), LONG_GAP.to_string()]
+        );
+        let jds = [
+            2460000.0, 2460000.02, 2460365.0, 2460365.02, 2460366.0, 2460366.02, 2460367.0,
+            2460367.02,
+        ];
+        assert_eq!(
+            track_flags(&members, &jds, Some(1.0), Some(0.5)),
+            vec![LONG_GAP.to_string()]
         );
     }
 
@@ -1329,6 +1369,7 @@ pub(crate) mod tests {
             bound_fit_residual_arcsec: None,
             bound_fit_detections: None,
             orbit: None,
+            seeds: Vec::new(),
             mag_spread: None,
             designation: None,
             kind: None,
