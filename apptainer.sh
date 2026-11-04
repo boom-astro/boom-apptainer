@@ -133,6 +133,31 @@ colorize_log() {
     }'
 }
 
+STOPPED_FILE="$BOOM_DIR/apptainer/persistent/stopped"
+WATCHED_SERVICES="mongo valkey kafka prometheus otel listener api task-worker linker kuma"
+WATCHED_SURVEYS="ztf lsst decam winter"
+
+survey_components() {
+  local kind survey
+  for survey in ${2:-$WATCHED_SURVEYS}; do
+    for kind in $1; do
+      echo "$kind-$survey"
+    done
+  done
+}
+
+mark_stopped() {
+  mkdir -p "$(dirname "$STOPPED_FILE")"
+  { cat "$STOPPED_FILE" 2>/dev/null; printf '%s\n' "$@"; } | sort -u > "$STOPPED_FILE.new"
+  mv "$STOPPED_FILE.new" "$STOPPED_FILE"
+}
+
+mark_started() {
+  [ -f "$STOPPED_FILE" ] || return 0
+  grep -vxF -f <(printf '%s\n' "$@") "$STOPPED_FILE" > "$STOPPED_FILE.new"
+  mv "$STOPPED_FILE.new" "$STOPPED_FILE"
+}
+
 if [ "$1" != "build" ] && [ "$1" != "start" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] \
   && [ "$1" != "health" ] && [ "$1" != "benchmark" ] && [ "$1" != "filters" ] \
   && [ "$1" != "backup" ] && [ "$1" != "restore" ] && [ "$1" != "log" ] && [ "$1" != "error" ] && [ "$1" != "show" ]; then
@@ -176,6 +201,12 @@ if [ "$1" == "start" ]; then
     fi
     ARGS+=("$2" "$3") # program ID, scheduler config path
   fi
+  case "${ARGS[1]}" in
+    all) mark_started $WATCHED_SERVICES ${ARGS[2]:+$(survey_components "consumer scheduler" "${ARGS[2]}")} ;;
+    boom) [ -n "${ARGS[2]}" ] && mark_started $(survey_components "consumer scheduler" "${ARGS[2]}") ;;
+    consumer|scheduler) [ -n "${ARGS[2]}" ] && mark_started "${ARGS[1]}-${ARGS[2]}" ;;
+    *) mark_started "${ARGS[1]}" ;;
+  esac
   # See apptainer_start.sh for the full explanation of each argument
   "$SCRIPTS_DIR/apptainer_start.sh" "${ARGS[@]}"
   exit $?
@@ -195,6 +226,14 @@ if [ "$1" == "stop" ]; then
     echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | task-worker | linker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma ${END}"
     exit 1
   fi
+
+  case "$target" in
+    ""|all) mark_stopped $WATCHED_SERVICES $(survey_components "consumer scheduler") ;;
+    boom) mark_stopped $(survey_components "consumer scheduler" "$3") ;;
+    consumer|scheduler) mark_stopped $(survey_components "$target" "$3") ;;
+    boom_*) ;;
+    *) mark_stopped "$target" ;;
+  esac
 
   if stop_service "kuma" "$target"; then
     apptainer instance stop kuma
