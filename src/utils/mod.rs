@@ -7,6 +7,7 @@ pub mod cutouts;
 pub mod data;
 pub mod db;
 pub mod derive_avro_schema;
+pub mod digest2;
 pub mod discovery;
 pub mod enums;
 pub mod fast;
@@ -30,7 +31,9 @@ pub mod spatial;
 pub mod sso_geometry;
 pub mod testing;
 pub mod thor;
+pub mod tns;
 pub mod tracks;
+pub mod variability;
 pub mod vsop87;
 pub mod worker;
 
