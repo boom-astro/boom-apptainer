@@ -20,6 +20,7 @@
 #      - tempo       : starts the Grafana Tempo instance (opt-in, not part of "all")
 #      - listener    : starts Boom healthcheck listener process
 #      - kuma        : starts the Kuma instance
+#      - tempo-inference : starts the TEMPO classification service the API calls
 #
 # Additional arguments for 'boom', 'consumer', or 'scheduler':
 # $3 = survey name (required for consumer/scheduler)
@@ -96,9 +97,9 @@ wait_healthy() {
 
 if [ "$2" != "all" ] && [ "$2" != "boom" ] && [ "$2" != "consumer" ] && [ "$2" != "scheduler" ] && [ "$2" != "api" ] \
   && [ "$2" != "task-worker" ] && [ "$2" != "linker" ] && [ "$2" != "dev" ] && [ "$2" != "mongo" ] && [ "$2" != "kafka" ] && [ "$2" != "valkey" ] && [ "$2" != "prometheus" ] \
-  && [ "$2" != "grafana" ] && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ]; then
+  && [ "$2" != "grafana" ] && [ "$2" != "otel" ] && [ "$2" != "tempo" ] && [ "$2" != "listener" ] && [ "$2" != "kuma" ] && [ "$2" != "tempo-inference" ]; then
   echo -e "${RED}Error: Invalid service name '$2'.${END}"
-  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | task-worker | linker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
+  echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | api | task-worker | linker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | tempo-inference | all${END}"
   exit 1
 fi
 
@@ -241,7 +242,7 @@ fi
 # Grafana Tempo (opt-in, re-enable the traces pipeline in apptainer-otel-collector-config.yaml first)
 # -----------------------------
 if [ "$2" = "tempo" ]; then
-  if "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo > /dev/null 2>&1; then
+  if "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo -config.file" tempo > /dev/null 2>&1; then
     echo && echo -e "${YELLOW}$(current_datetime) - Tempo is already running${END}"
   else
     echo && echo "$(current_datetime) - Starting Tempo"
@@ -256,7 +257,7 @@ if [ "$2" = "tempo" ]; then
       "$SIF_DIR/tempo.sif" /tempo -config.file=/etc/tempo/config.yaml \
       > "$(fresh_log "$LOGS_DIR/tempo/tempo.log")" 2>&1 &
     sleep 1
-    wait_healthy Tempo "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo" tempo
+    wait_healthy Tempo "$HEALTHCHECK_DIR/process-healthcheck.sh" "/tempo -config.file" tempo
   fi
 fi
 
@@ -496,5 +497,25 @@ if start_service "kuma" "$2"; then
       --bind "$LOGS_DIR/kuma:/app/logs" \
       "$SIF_DIR/kuma.sif" kuma
     wait_healthy "Uptime Kuma" "$HEALTHCHECK_DIR/kuma-healthcheck.sh"
+  fi
+fi
+# -----------------------------
+# TEMPO inference
+# -----------------------------
+if start_service "tempo-inference" "$2"; then
+  if apptainer instance list | awk '{print $1}' | grep -xq "tempo_inference"; then
+    echo && echo -e "${YELLOW}$(current_datetime) - TEMPO inference instance is already running${END}"
+  else
+    echo && echo "$(current_datetime) - Starting TEMPO inference instance"
+    apptainer instance start "$SIF_DIR/tempo-inference.sif" tempo_inference
+    sleep 3
+  fi
+
+  if pgrep -f "uvicorn app:app --host 127.0.0.1 --port 8500" > /dev/null; then
+    echo -e "${YELLOW}TEMPO inference already running.${END}"
+  else
+    setsid apptainer exec --cleanenv --pwd /app "instance://tempo_inference" uvicorn app:app --host 127.0.0.1 --port 8500 \
+      > "$(fresh_log "$LOGS_DIR/tempo_inference.log")" 2>&1 &
+    wait_healthy "TEMPO inference" "$HEALTHCHECK_DIR/tempo-inference-healthcheck.sh"
   fi
 fi

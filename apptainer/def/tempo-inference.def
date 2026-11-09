@@ -1,0 +1,22 @@
+Bootstrap: docker
+From: python:3.12-slim
+
+%arguments
+    TEMPO_HYRAX_REF=
+
+%environment
+    export TEMPO_BUNDLE_DIR=/models/tempo
+
+%files
+    services/tempo/requirements.txt /app/requirements.txt
+    services/tempo/app.py /app/app.py
+    services/tempo/predictor.py /app/predictor.py
+    data/models/tempo /models/tempo
+
+%post
+    [ -n "{{ TEMPO_HYRAX_REF }}" ] || { echo "TEMPO_HYRAX_REF is required"; exit 1; }
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch>=2.9,<3" || exit 1
+    pip install --no-cache-dir -r /app/requirements.txt || exit 1
+    pip install --no-cache-dir --no-deps \
+      "https://github.com/frenbox/hyrax_tempo/archive/{{ TEMPO_HYRAX_REF }}.tar.gz" || exit 1
+    chmod -R a+rX /app /models

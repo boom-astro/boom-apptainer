@@ -21,6 +21,7 @@
 #     - "otel"         : builds OpenTelemetry Collector service
 #     - "tempo"        : builds Grafana Tempo service (opt-in, not part of "all")
 #     - "kuma"         : builds Uptime Kuma service
+#     - "tempo-inference" : builds the TEMPO classification service
 
 YELLOW="\e[33m"
 END="\e[0m"
@@ -119,3 +120,8 @@ for service in mongo kafka valkey prometheus kuma; do
     apptainer build --force apptainer/sif/"$service".sif apptainer/def/"$service".def
   fi
 done
+
+if start_service "tempo-inference" "$1"; then
+  TEMPO_HYRAX_REF=$(sed -n 's/^ARG TEMPO_HYRAX_REF=//p' services/tempo/Dockerfile)
+  apptainer build --force --build-arg TEMPO_HYRAX_REF="$TEMPO_HYRAX_REF" apptainer/sif/tempo-inference.sif apptainer/def/tempo-inference.def
+fi

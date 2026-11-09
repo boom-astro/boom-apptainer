@@ -134,7 +134,7 @@ colorize_log() {
 }
 
 STOPPED_FILE="$BOOM_DIR/apptainer/persistent/stopped"
-WATCHED_SERVICES="mongo valkey kafka prometheus otel listener api task-worker linker kuma"
+WATCHED_SERVICES="mongo valkey kafka prometheus otel listener api task-worker linker kuma tempo-inference"
 WATCHED_SURVEYS="ztf lsst decam winter"
 
 survey_components() {
@@ -220,10 +220,10 @@ if [ "$1" == "stop" ]; then
   if [ -n "$target" ] && [ "$target" != "all" ] && [[ "$target" != boom* ]] && [ "$target" != "consumer" ] && [ "$target" != "scheduler" ] \
     && [ "$target" != "api" ] && [ "$target" != "task-worker" ] && [ "$target" != "linker" ] && [ "$target" != "dev" ] && [ "$target" != "mongo" ] && [ "$target" != "kafka" ] && [ "$target" != "valkey" ] \
     && [ "$target" != "prometheus" ] && [ "$target" != "grafana" ] && [ "$target" != "otel" ] && [ "$target" != "tempo" ] \
-    && [ "$target" != "listener" ] && [ "$target" != "kuma" ]; then
+    && [ "$target" != "listener" ] && [ "$target" != "kuma" ] && [ "$target" != "tempo-inference" ]; then
     echo -e "${RED}Error: Invalid service name '$target'.${END}"
     echo -e "Usage: ${BLUE}$0 stop [service|all|'empty']${END} ${YELLOW}('empty' will default to all)${END}"
-    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | task-worker | linker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma ${END}"
+    echo -e "  ${BLUE}[service]:${END} ${GREEN}boom_<survey> | consumer | scheduler | api | task-worker | linker | dev | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | tempo-inference ${END}"
     exit 1
   fi
 
@@ -245,7 +245,7 @@ if [ "$1" == "stop" ]; then
     kill_process "/otelcol" "Otel collector"
   fi
   if stop_service "tempo" "$target"; then
-    kill_process "/tempo" "Tempo"
+    kill_process "/tempo -config.file" "Tempo"
   fi
   if stop_service "grafana" "$target"; then
     apptainer instance stop grafana
@@ -261,6 +261,9 @@ if [ "$1" == "stop" ]; then
   fi
   if stop_service "linker" "$target"; then
     apptainer instance stop linker
+  fi
+  if stop_service "tempo-inference" "$target"; then
+    apptainer instance stop tempo_inference
   fi
   if stop_service "dev" "$target"; then
       apptainer instance stop dev
@@ -354,6 +357,7 @@ if [ "$1" == "health" ]; then
   "$HEALTHCHECK_DIR/process-healthcheck.sh" "/otelcol" otel-collector
   "$HEALTHCHECK_DIR/boom-listener-healthcheck.sh" 0
   "$HEALTHCHECK_DIR/kuma-healthcheck.sh" 0
+  "$HEALTHCHECK_DIR/tempo-inference-healthcheck.sh" 0
   exit 0
 fi
 
