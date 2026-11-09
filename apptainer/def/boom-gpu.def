@@ -114,3 +114,6 @@ Stage: final
     export UV_PROJECT_ENVIRONMENT=/app/boompy/.venv
     uv sync --project /app/boompy --frozen --no-dev --no-cache || exit 1
     mkdir -p /app/data/catalogs
+    mkdir -p /app/data/kernels
+    curl -fsSL -o /app/data/kernels/de440s.bsp https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp || exit 1
+    chmod 644 /app/data/kernels/de440s.bsp

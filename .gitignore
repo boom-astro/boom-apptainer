@@ -41,6 +41,7 @@ config.docker.yaml
 *.dat
 *.csv
 *.fits
+*.bsp
 *.fit
 *.fz
 *.npy

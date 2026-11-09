@@ -17,7 +17,6 @@ use crate::{
         spatial::{xmatch, Coordinates},
     },
 };
-use apache_avro_derive::AvroSchema;
 use apache_avro_macros::serdavro;
 use constcat::concat;
 use flare::Time;
@@ -742,7 +741,8 @@ pub struct DiaObject {
 
 #[serde_as]
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize, Default, AvroSchema, ToSchema)]
+#[serdavro]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize, Default, ToSchema)]
 #[serde(default)]
 pub struct DiaForcedSource {
     /// Unique id.
@@ -1016,6 +1016,7 @@ where
     let dia_sources = <Vec<DiaSource> as Deserialize>::deserialize(deserializer)?;
     let candidates = dia_sources
         .into_iter()
+        .filter(|dia_source| dia_source.psf_flux.is_none_or(f32::is_finite))
         .map(LsstPrvCandidate::try_from)
         .collect::<Result<Vec<LsstPrvCandidate>, AlertError>>()
         .map_err(serde::de::Error::custom)?;
@@ -1448,6 +1449,21 @@ impl AlertWorker for LsstAlertWorker {
                 .await
                 .inspect_err(as_error!())?,
         );
+        if let Some(id) = survey_matches
+            .as_ref()
+            .and_then(|a| a.ztf.first())
+            .filter(|_| ss_object_id.is_none())
+        {
+            self.link_counterpart(
+                &self.ztf_alert_aux_collection,
+                id,
+                &object_id,
+                "LSST",
+                "DECAM",
+            )
+            .await
+            .inspect_err(as_error!())?;
+        }
 
         // The designation is only known once a diaSource is linked to an ssObject; keep it
         // current independent of whichever branch below runs, and regardless of any ZTF
