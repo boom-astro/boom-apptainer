@@ -16,6 +16,7 @@ use crate::utils::cutouts::{AlertCutout, CutoutStorage};
 use crate::utils::db::mongify;
 use crate::utils::enums::{ProgramId, Survey};
 use crate::utils::host::{HostGalaxyAssociation, HostSummary};
+use crate::utils::lightcurve_fits;
 use crate::utils::lightcurves::{
     analyze_photometry, is_stationary, prepare_photometry, signed_snr, summarise_detections,
     ActivityMetrics, AllBandsProperties, Band, DetectionHistory, EpisodeHistory, Morphology,
@@ -23,7 +24,9 @@ use crate::utils::lightcurves::{
     STATIONARY_MIN_FORCED_SNR, ZTF_ZP,
 };
 use crate::utils::linking::{angular_separation_deg, night_at};
-use crate::utils::mpcorb::{elements_from_document, normalize_ztf_ssnamenr, ORBITS_COLLECTION};
+use crate::utils::mpcorb::{
+    elements_from_document, is_comet_designation, normalize_ztf_ssnamenr, ORBITS_COLLECTION,
+};
 use crate::utils::outburst::{median, Point, MAX_SEPARATION_ARCSEC};
 use crate::utils::phase_curve::{curves_from_document, PhaseCurve, BASELINES_COLLECTION};
 use crate::utils::sso_geometry::{geometry_at, OrbitalElements, ZTF};
@@ -156,9 +159,9 @@ impl TryFrom<ZtfForcedPhotometry> for ZtfPhotometry {
         let flux = phot
             .flux
             .filter(|f| *f != -99999.0 && !f.is_nan())
-            .map(|f| f * 1e9_f64 * zp_scaling_factor); // convert to a fixed ZP and nJy
+            .map(|f| f * zp_scaling_factor);
         let flux_err = if phot.flux_err != -99999.0 && !phot.flux_err.is_nan() {
-            phot.flux_err * 1e9_f64 * zp_scaling_factor // convert to a fixed ZP and nJy
+            phot.flux_err * zp_scaling_factor
         } else {
             return Err(EnrichmentWorkerError::MissingFluxPSF);
         };
@@ -235,6 +238,13 @@ impl ZtfPhotometry {
             },
             _ => None,
         }
+    }
+
+    pub fn to_positive_mag(&self) -> Option<PhotometryMag> {
+        if self.flux.is_some_and(|f| f < 0.0) {
+            return None;
+        }
+        self.to_photometry_mag(None)
     }
 }
 
@@ -1020,6 +1030,7 @@ impl EnrichmentWorker for ZtfEnrichmentWorker {
         let batch_size = alerts.len();
         let mut skipped_empty_lightcurve: Vec<i64> = Vec::new();
         let mut work_items: Vec<AlertWork> = Vec::with_capacity(alerts.len());
+        let mut fit_inputs: Vec<Vec<PhotometryMag>> = Vec::with_capacity(alerts.len());
         #[cfg(feature = "gpu")]
         let mut villar_inputs: Vec<(i64, Vec<PhotometryMag>)> = Vec::new();
         for alert in alerts {
@@ -1027,7 +1038,6 @@ impl EnrichmentWorker for ZtfEnrichmentWorker {
             let cutouts = candid_to_cutouts
                 .remove(&candid)
                 .ok_or_else(|| EnrichmentWorkerError::MissingCutouts(candid))?;
-            #[cfg_attr(not(feature = "gpu"), allow(unused_variables))]
             let (properties, all_bands_properties, programid, lightcurve, ztf_lightcurve) =
                 match self
                     .get_alert_properties(&alert, &orbits, &sso_history, &baselines)
@@ -1044,8 +1054,9 @@ impl EnrichmentWorker for ZtfEnrichmentWorker {
                 };
             #[cfg(feature = "gpu")]
             if self.models.gpu_ctx.is_some() {
-                villar_inputs.push((candid, lightcurve));
+                villar_inputs.push((candid, lightcurve.clone()));
             }
+            fit_inputs.push(lightcurve);
 
             work_items.push(AlertWork {
                 candid,
@@ -1077,7 +1088,20 @@ impl EnrichmentWorker for ZtfEnrichmentWorker {
             }));
         }
 
+        let span = tracing::Span::current();
+        let fits_task = tokio::task::spawn_blocking(move || {
+            span.in_scope(|| lightcurve_fits::fit_many(&fit_inputs))
+        });
+
         let classifications_list = self.classify(&self.models, &work_items)?;
+
+        let mut fits = fits_task
+            .await
+            .unwrap_or_else(|e| {
+                warn!("light curve fitting failed for the whole batch: {}", e);
+                Vec::new()
+            })
+            .into_iter();
 
         for (item, mut classifications) in work_items.into_iter().zip(classifications_list) {
             // Extracting the fusion embedding from the classifications
@@ -1093,6 +1117,10 @@ impl EnrichmentWorker for ZtfEnrichmentWorker {
             };
             if let Some(cls) = &classifications {
                 set_doc.insert("classifications", mongify(cls));
+            }
+            if let Some(Some(fit)) = fits.next() {
+                set_doc.insert("arnett_fit", mongify(&fit.arnett));
+                set_doc.insert("thermal_fit", mongify(&fit.thermal));
             }
 
             updates.push(WriteModel::UpdateOne(
@@ -1456,7 +1484,6 @@ impl ZtfEnrichmentWorker {
         let programid = candidate.programid;
         let ssdistnr = candidate.ssdistnr.unwrap_or(f32::INFINITY);
         let ssmagnr = candidate.ssmagnr.unwrap_or(f32::INFINITY);
-        let is_rock = (0.0..12.0).contains(&ssdistnr) && ssmagnr >= 0.0;
 
         let activity = ActivityMetrics::from_magnitudes(Some(candidate.magpsf), candidate.magap);
 
@@ -1465,6 +1492,14 @@ impl ZtfEnrichmentWorker {
             .ssnamenr
             .as_deref()
             .and_then(|name| orbits.get(name));
+
+        // IPAC predicts no magnitude for comets.
+        let known_comet = elements.is_some()
+            && candidate
+                .ssnamenr
+                .as_deref()
+                .is_some_and(is_comet_designation);
+        let is_rock = (0.0..12.0).contains(&ssdistnr) && (ssmagnr >= 0.0 || known_comet);
 
         let sso = ZtfSsoAssociation::from_ipac(
             candidate.ssnamenr.clone(),
@@ -1534,9 +1569,18 @@ impl ZtfEnrichmentWorker {
         if lightcurve.is_empty() {
             return Err(EnrichmentWorkerError::EmptyLightcurve(alert.candid));
         }
-        let (photstats, all_bands_properties, _) = analyze_photometry(&lightcurve);
+        let (_, all_bands_properties, _) = analyze_photometry(&lightcurve);
         // cider was trained on ZTF only, so snapshot before the cross-survey extend.
         let ztf_lightcurve = lightcurve.clone();
+        let mut detections: Vec<PhotometryMag> = alert
+            .prv_candidates
+            .iter()
+            .chain(&alert.fp_hists)
+            .filter(|p| p.jd <= alert.candidate.candidate.jd)
+            .filter_map(|p| p.to_positive_mag())
+            .collect();
+        prepare_photometry(&mut detections);
+        let photstats = analyze_photometry(&detections).0;
         let stationary = is_stationary(
             alert
                 .prv_candidates
@@ -1565,11 +1609,20 @@ impl ZtfEnrichmentWorker {
                     .collect();
                 lightcurve.extend(lsst_lightcurve);
                 prepare_photometry(&mut lightcurve);
+                detections.extend(
+                    lsst_match
+                        .prv_candidates
+                        .iter()
+                        .chain(&lsst_match.fp_hists)
+                        .filter(|p| p.jd <= candidate.jd)
+                        .filter_map(|p| p.to_positive_mag()),
+                );
+                prepare_photometry(&mut detections);
                 has_matches = true;
             }
         }
         let multisurvey_photstats = if has_matches {
-            analyze_photometry(&lightcurve).0
+            analyze_photometry(&detections).0
         } else {
             photstats.clone()
         };
@@ -1581,7 +1634,7 @@ impl ZtfEnrichmentWorker {
         let multisurvey_photstats = if decam_lightcurve.is_empty() {
             multisurvey_photstats
         } else {
-            let mut with_decam = [lightcurve.clone(), decam_lightcurve].concat();
+            let mut with_decam = [detections, decam_lightcurve].concat();
             prepare_photometry(&mut with_decam);
             analyze_photometry(&with_decam).0
         };

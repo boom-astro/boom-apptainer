@@ -190,6 +190,7 @@ later.
 | --- | --- |
 | `catalog_ingest` | Download an archival catalog and insert it. See [catalogs.md](./catalogs.md). |
 | `migrate_fp_flux` | Recompute ZTF forced-photometry flux in `ZTF_alerts_aux` at a fixed zeropoint. |
+| `migrate_ztf_flux` | Recompute every ZTF flux (alerts, detections, non-detections, forced photometry) in nJy. |
 | `migrate_snr` | Recompute `snr_psf`, `snr_ap` and ZTF `apFlux` across alerts and lightcurves. |
 | `reprocess_crossmatch` | Fill in or refresh crossmatches on a survey's `alerts_aux` records, or with `remove` unset a dropped catalog's matches. |
 | `prepare_catalog` | Add spatial fields and a 2dsphere index to a hand-imported collection. |
@@ -402,6 +403,12 @@ Completion needs `LLEN == 0` twice in a row. A worker pops a batch of up to
 1000 before processing it, so a single zero can be observed while a batch is
 still in flight, and stopping there would count those alerts as reprocessed
 before they were.
+
+Each worker moves its batch onto its own in-flight list and clears it once the
+batch is processed. A batch that fails is retried one alert at a time; the
+alerts that still fail, and the batch of a worker that died, go to
+`<queue>_failed`. The run then fails and names that list, which can be passed
+back as `input_queue` to retry them.
 
 Selection is explicit rather than inferred: everything not enriched by the
 current set (`stale`, the one to use after changing a model or a formula),
