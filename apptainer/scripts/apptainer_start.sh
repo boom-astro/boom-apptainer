@@ -327,7 +327,7 @@ if start_service "boom" "$2" || start_service "consumer" "$2" || start_service "
     echo -e "${BLUE}apptainer_start.sh start <service|all|'empty'> [survey_name] [date_option] [program_id] [scheduler_config_path]${END} ${YELLOW}('empty' will default to all}${END}"
     echo -e "  ${BLUE}<service>:${END} ${GREEN}boom | consumer | scheduler | mongo | kafka | valkey | prometheus | grafana | otel | tempo | listener | kuma | all${END}"
     echo -e "  ${YELLOW}The following arguments are only required if starting <all|boom|consumer|scheduler>${END}:"
-    echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam | winter${END}"
+    echo -e "  ${BLUE}[survey_name]:${END} ${GREEN}lsst | ztf | decam | winter | askap${END}"
     echo -e "  ${BLUE}[date_option]:${END} ${GREEN}--from=YYYYMMDD | --on=YYYYMMDD | YYYYMMDD${END} ${YELLOW}(optional, omit to follow the current day, --from to catch up from a past one, --on to replay it alone)${END}"
     echo -e "  ${BLUE}[program_id]:${END} ${GREEN}public | partnership | caltech${END} ${YELLOW}(only for ztf)${END}"
 

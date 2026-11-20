@@ -135,7 +135,7 @@ colorize_log() {
 
 STOPPED_FILE="$BOOM_DIR/apptainer/persistent/stopped"
 WATCHED_SERVICES="mongo valkey kafka prometheus otel listener api task-worker linker kuma tempo-inference"
-WATCHED_SURVEYS="ztf lsst decam winter"
+WATCHED_SURVEYS="ztf lsst decam winter askap"
 
 survey_components() {
   local kind survey
@@ -180,7 +180,7 @@ fi
 if [ "$1" == "start" ]; then
   ARGS=("$BOOM_DIR")
   # Check if $2 is a survey name
-  if [ -z "$2" ] || [ "$2" = "lsst" ] || [ "$2" = "ztf" ] || [ "$2" = "decam" ] || [ "$2" = "winter" ]; then
+  if [ -z "$2" ] || [ "$2" = "lsst" ] || [ "$2" = "ztf" ] || [ "$2" = "decam" ] || [ "$2" = "winter" ] || [ "$2" = "askap" ]; then
     ARGS+=("all") # service to start
   else
     [ -n "$2" ] && ARGS+=("$2") # service to start
@@ -289,6 +289,9 @@ if [ "$1" == "stop" ]; then
     fi
     if apptainer instance list | grep -q "boom_winter"; then
       apptainer instance stop "boom_winter"
+    fi
+    if apptainer instance list | grep -q "boom_askap"; then
+      apptainer instance stop "boom_askap"
     fi
   elif stop_service "consumer" "$target"; then
     match_mode="partial"
@@ -450,7 +453,7 @@ if [ "$1" == "log" ]; then
 
   # Arguments are recognized by their shape, so they can be given in any order.
   for arg in "$@"; do
-    if [[ "$arg" =~ ^(lsst|ztf|decam|winter)$ ]]; then
+    if [[ "$arg" =~ ^(lsst|ztf|decam|winter|askap)$ ]]; then
       survey="$arg"
     elif [ "$arg" == "error" ]; then
       error_log="error"
@@ -459,7 +462,7 @@ if [ "$1" == "log" ]; then
     else
       echo -e "${RED}Error: Invalid argument '$arg'.${END}"
       echo -e "Usage: ${BLUE}$0 log [survey] [error] [lines]${END}"
-      echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam | winter${END} ${YELLOW}(optional, defaults to lsst)${END}"
+      echo -e "  ${BLUE}<survey>:${END} ${GREEN}lsst | ztf | decam | winter | askap${END} ${YELLOW}(optional, defaults to lsst)${END}"
       echo -e "  ${BLUE}<error>:${END} ${GREEN}error${END} ${YELLOW}(optional, if provided, will grep for ERROR|WARN in the logs)${END}"
       echo -e "  ${BLUE}<lines>:${END} ${GREEN}100${END} ${YELLOW}(optional, displays the first <lines> lines instead of following the log)${END}"
       exit 1
@@ -491,7 +494,7 @@ fi
 # Display log error
 # -----------------------------
 if [ "$1" == "error" ]; then
-  for survey in winter lsst ztf decam; do
+  for survey in winter lsst ztf decam askap; do
      log_file="$LOGS_DIR/${survey}_scheduler.log"
      if [ -f "$log_file" ]; then
        echo -e "${BLUE}Displaying $survey scheduler ERROR and WARN log...${END}"
