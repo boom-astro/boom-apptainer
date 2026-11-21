@@ -29,8 +29,9 @@ use super::ledger::{MutationTarget, Operation};
 use crate::conf::AppConfig;
 use crate::enrichment::{
     models::{SharedModelPool, SharedModels},
-    AskapEnrichmentWorker, DecamEnrichmentWorker, EnrichmentWorker, EnrichmentWorkerError,
-    LsstEnrichmentWorker, WinterEnrichmentWorker, ZtfEnrichmentWorker, ZtfSubsetWorker,
+    ArgusEnrichmentWorker, AskapEnrichmentWorker, DecamEnrichmentWorker, EnrichmentWorker,
+    EnrichmentWorkerError, LsstEnrichmentWorker, WinterEnrichmentWorker, ZtfEnrichmentWorker,
+    ZtfSubsetWorker,
 };
 use crate::utils::{
     enums::Survey,
@@ -264,8 +265,10 @@ pub async fn run(
     let config = ctx.config();
 
     #[cfg(target_os = "linux")]
-    crate::utils::gpu::validate_gpu_configuration_for_survey(&params.survey, config)
-        .map_err(|e| super::TaskError::InvalidParams(e.to_string()))?;
+    if !params.writes_subset() {
+        crate::utils::gpu::validate_gpu_configuration_for_survey(&params.survey, config)
+            .map_err(|e| super::TaskError::InvalidParams(e.to_string()))?;
+    }
 
     let worker_config = config.workers.get(&params.survey).ok_or_else(|| {
         super::TaskError::InvalidParams(format!("no worker config for {}", params.survey))
@@ -405,6 +408,7 @@ pub async fn run(
                     Survey::Decam => run_enrich_only::<DecamEnrichmentWorker>,
                     Survey::Winter => run_enrich_only::<WinterEnrichmentWorker>,
                     Survey::Askap => run_enrich_only::<AskapEnrichmentWorker>,
+                    Survey::Argus => run_enrich_only::<ArgusEnrichmentWorker>,
                 };
                 let result = run_worker(
                     receiver,

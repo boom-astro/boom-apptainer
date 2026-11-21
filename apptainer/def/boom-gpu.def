@@ -14,6 +14,7 @@ Stage: build
     Cargo.lock /app/Cargo.lock
     build.rs /app/build.rs
     proto /app/proto
+    schemas /app/schemas
     apache-avro-macros /app/apache-avro-macros
     src /app/src
 

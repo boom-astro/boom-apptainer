@@ -20,6 +20,7 @@ From: rust:1.99.1-slim-trixie
     Cargo.lock /app/Cargo.lock
     build.rs /app/build.rs
     proto /app/proto
+    schemas /app/schemas
     apache-avro-macros /app/apache-avro-macros
     data/models /app/data/models
     data/ls_footprint_moc.fits /app/data/ls_footprint_moc.fits
